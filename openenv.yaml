@@ -1,0 +1,18 @@
+name: chronomigrate-env
+version: 0.1.0
+description: >
+  An RL environment that trains AI agents to execute zero-downtime
+  database schema migrations under simulated transactional load.
+  Agents are scored on schema correctness, data integrity, and
+  operational availability, not just whether the migration succeeded.
+action: MigrationAction
+observation: MigrationObservation
+state: MigrationState
+mcp_enabled: false
+runtime: docker
+tags:
+  - openenv
+  - database
+  - reinforcement-learning
+  - zero-downtime
+  - schema-migration

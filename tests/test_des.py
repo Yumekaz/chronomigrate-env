@@ -1,0 +1,13 @@
+from server.des_simulator import DiscreteEventSimulator
+
+
+def test_des_is_deterministic():
+    first = DiscreteEventSimulator(task_load_level=100, seed=42).simulate_step(5, 0.2)
+    second = DiscreteEventSimulator(task_load_level=100, seed=42).simulate_step(5, 0.2)
+    assert first == second
+
+
+def test_des_reports_zero_downtime_for_zero_failure_rate():
+    result = DiscreteEventSimulator(task_load_level=100, seed=42).simulate_step(0, 0.0)
+    assert result.downtime_pct == 0.0
+    assert result.queries_failed == 0
