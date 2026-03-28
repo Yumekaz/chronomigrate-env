@@ -3,47 +3,107 @@ import subprocess
 import sys
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from models import MigrationAction, MigrationObservation
+from models import MigrationAction, MigrationObservation, MigrationState
 from server.chrono_migrate_env import ChronoMigrateEnv
 from server.tasks import TASKS
 
-try:
-    from openenv.core.server import create_fastapi_app
-except Exception:
-    def create_fastapi_app(env, action_model, observation_model):
-        app = FastAPI(title="ChronoMigrate-Env")
-
-        @app.get("/health")
-        def health() -> Dict[str, str]:
-            return {"status": "ok"}
-
-        @app.post("/reset", response_model=observation_model)
-        def reset(config: Optional[dict] = None):
-            return env.reset(config or {})
-
-        @app.post("/step")
-        def step(action: action_model):
-            observation = env.step(action)
-            state = env.state()
-            return {
-                "observation": observation.model_dump(),
-                "reward": env.last_step_reward,
-                "done": state.done,
-                "metadata": env.last_metadata,
-            }
-
-        @app.get("/state")
-        def state():
-            return env.state()
-
-        return app
+ENV_NAME = "chronomigrate-env"
+ENV_VERSION = "0.1.0"
+ENV_DESCRIPTION = (
+    "An RL environment that trains AI agents to execute zero-downtime "
+    "database schema migrations under simulated transactional load."
+)
+ENV_TAGS = [
+    "openenv",
+    "database",
+    "reinforcement-learning",
+    "zero-downtime",
+    "schema-migration",
+]
 
 
 env = ChronoMigrateEnv()
-app = create_fastapi_app(env, MigrationAction, MigrationObservation)
+app = FastAPI(
+    title="ChronoMigrate-Env",
+    version=ENV_VERSION,
+    description=ENV_DESCRIPTION,
+)
+
+
+@app.get("/health")
+def health() -> Dict[str, str]:
+    return {"status": "healthy"}
+
+
+@app.get("/metadata")
+def metadata() -> Dict[str, object]:
+    return {
+        "name": ENV_NAME,
+        "version": ENV_VERSION,
+        "description": ENV_DESCRIPTION,
+        "runtime": "docker",
+        "tags": ENV_TAGS,
+        "mcp_enabled": False,
+    }
+
+
+@app.get("/schema")
+def schema() -> Dict[str, dict]:
+    return {
+        "action": MigrationAction.model_json_schema(),
+        "observation": MigrationObservation.model_json_schema(),
+        "state": MigrationState.model_json_schema(),
+    }
+
+
+class MCPRequest(BaseModel):
+    jsonrpc: str = "2.0"
+    id: Optional[object] = None
+    method: Optional[str] = None
+    params: Optional[dict] = None
+
+
+@app.post("/mcp")
+def mcp(request: MCPRequest) -> Dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request.id,
+        "error": {"code": -32601, "message": "MCP disabled for this environment"},
+    }
+
+
+@app.post("/reset", response_model=MigrationObservation)
+def reset(config: Optional[dict] = None):
+    try:
+        return env.reset(config or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/step")
+def step(action: MigrationAction):
+    try:
+        observation = env.step(action)
+        state = env.state()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "observation": observation.model_dump(),
+        "reward": env.last_step_reward,
+        "done": state.done,
+        "metadata": env.last_metadata,
+    }
+
+
+@app.get("/state")
+def state():
+    try:
+        return env.state()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/tasks")
@@ -71,9 +131,15 @@ class GraderRequest(BaseModel):
 
 @app.post("/grader")
 def grade_episode(req: GraderRequest) -> Dict:
-    state = env.state()
+    try:
+        state = env.state()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     if state.task_id != req.task_id:
         return {"score": 0.0, "feedback": "No active episode for this task"}
+    if req.episode_id and req.episode_id != state.episode_id:
+        return {"score": 0.0, "feedback": "Episode ID mismatch for this task"}
 
     total = state.total_background_queries
     failed = state.failed_background_queries
@@ -85,9 +151,19 @@ def grade_episode(req: GraderRequest) -> Dict:
         state.data_integrity_hash,
         state.current_data_hash,
         availability,
+        action_history=env.action_history,
+        steps_used=state.step_count,
+    )
+    episode_reward = env.compute_terminal_reward(
+        final_schema_match=state.schema_match_pct,
+        final_availability=availability,
+        data_integrity=1.0 if state.current_data_hash == state.data_integrity_hash else 0.0,
+        steps_used=state.step_count,
+        max_steps=state.max_steps,
     )
     return {
         "score": round(score, 4),
+        "episode_reward": round(episode_reward, 4),
         "schema_match": round(state.schema_match_pct, 4),
         "availability": round(availability, 4),
         "data_integrity": 1.0 if state.current_data_hash == state.data_integrity_hash else 0.0,

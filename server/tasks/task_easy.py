@@ -1,4 +1,5 @@
-from server.schema_grader import compute_schema_match
+from datetime import datetime, timedelta
+
 from server.tasks import TaskDefinition
 
 
@@ -20,14 +21,28 @@ CREATE TABLE users (
 );
 """
 
-SEED_DATA = """
-INSERT INTO users (id, username, created_at) VALUES
-(1, 'user_001', '2025-01-01 00:00:00'),
-(2, 'user_002', '2025-01-01 00:00:01'),
-(3, 'user_003', '2025-01-01 00:00:02'),
-(4, 'user_004', '2025-01-01 00:00:03'),
-(5, 'user_005', '2025-01-01 00:00:04');
-"""
+def _format_insert_batches(table: str, columns: str, rows: list[str], batch_size: int = 200) -> str:
+    statements = []
+    for index in range(0, len(rows), batch_size):
+        batch = rows[index : index + batch_size]
+        statements.append(
+            f"INSERT INTO {table} ({columns}) VALUES\n" + ",\n".join(batch) + ";"
+        )
+    return "\n\n".join(statements)
+
+
+def _build_seed_data() -> str:
+    base = datetime(2025, 1, 1, 0, 0, 0)
+    rows = []
+    for index in range(1, 1001):
+        created_at = base + timedelta(seconds=index - 1)
+        rows.append(
+            f"({index}, 'user_{index:04d}', '{created_at:%Y-%m-%d %H:%M:%S}')"
+        )
+    return _format_insert_batches("users", "id, username, created_at", rows, batch_size=250)
+
+
+SEED_DATA = _build_seed_data()
 
 
 def grade_easy(
@@ -36,7 +51,10 @@ def grade_easy(
     data_hash_before: str,
     data_hash_after: str,
     availability_pct: float,
+    **_: object,
 ) -> float:
+    from server.schema_grader import compute_schema_match
+
     schema_match = compute_schema_match(current_schema_ddl, target_schema_ddl)
     data_integrity = 1.0 if data_hash_before == data_hash_after else 0.0
     return min(1.0, schema_match * data_integrity * availability_pct)

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict
 
 
-GradeFunction = Callable[[str, str, str, str, float], float]
+GradeFunction = Callable[..., float]
 
 
 @dataclass(frozen=True)

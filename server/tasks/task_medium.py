@@ -1,4 +1,3 @@
-from server.schema_grader import compute_schema_match
 from server.tasks import TaskDefinition
 
 
@@ -44,22 +43,44 @@ CREATE TABLE order_items (
 );
 """
 
-SEED_DATA = """
-INSERT INTO users (id, username) VALUES
-(1, 'alice'),
-(2, 'bob'),
-(3, 'carol');
+def _format_insert_batches(table: str, columns: str, rows: list[str], batch_size: int = 250) -> str:
+    statements = []
+    for index in range(0, len(rows), batch_size):
+        batch = rows[index : index + batch_size]
+        statements.append(
+            f"INSERT INTO {table} ({columns}) VALUES\n" + ",\n".join(batch) + ";"
+        )
+    return "\n\n".join(statements)
 
-INSERT INTO orders (id, user_id, amount) VALUES
-(1, 1, 19.99),
-(2, 1, 29.99),
-(3, 2, 39.99);
 
-INSERT INTO order_items (id, order_id, product_name) VALUES
-(1, 1, 'book'),
-(2, 1, 'pen'),
-(3, 2, 'bag');
-"""
+def _build_seed_data() -> str:
+    user_rows = [f"({index}, 'user_{index:04d}')" for index in range(1, 501)]
+
+    order_rows = []
+    for index in range(1, 1501):
+        user_id = ((index - 1) % 500) + 1
+        amount = 10.0 + ((index * 37) % 4000) / 100.0
+        order_rows.append(f"({index}, {user_id}, {amount:.2f})")
+
+    item_rows = []
+    product_names = ["book", "pen", "bag", "mouse", "desk", "chair"]
+    for index in range(1, 4501):
+        order_id = ((index - 1) % 1500) + 1
+        product_name = product_names[(index - 1) % len(product_names)]
+        item_rows.append(f"({index}, {order_id}, '{product_name}_{index:04d}')")
+
+    return "\n\n".join(
+        [
+            _format_insert_batches("users", "id, username", user_rows, batch_size=250),
+            _format_insert_batches("orders", "id, user_id, amount", order_rows, batch_size=300),
+            _format_insert_batches(
+                "order_items", "id, order_id, product_name", item_rows, batch_size=500
+            ),
+        ]
+    )
+
+
+SEED_DATA = _build_seed_data()
 
 
 def grade_medium(
@@ -68,7 +89,10 @@ def grade_medium(
     data_hash_before: str,
     data_hash_after: str,
     availability_pct: float,
+    **_: object,
 ) -> float:
+    from server.schema_grader import compute_schema_match
+
     schema_match = compute_schema_match(current_schema_ddl, target_schema_ddl)
     data_integrity = 1.0 if data_hash_before == data_hash_after else 0.0
     partial_bonus = 0.1 if schema_match >= 0.7 else 0.0

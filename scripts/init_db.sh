@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 export PGDATA=/home/user/pgdata
 export PGPORT=5433
@@ -7,16 +7,19 @@ export PATH=/usr/lib/postgresql/15/bin:$PATH
 
 echo "Attempting PostgreSQL user-space initialization..."
 
-if [ ! -f "$PGDATA/PG_VERSION" ]; then
-  mkdir -p "$PGDATA"
+mkdir -p "$PGDATA"
+
+if [ ! -f "$PGDATA/PG_VERSION" ] && command -v initdb >/dev/null 2>&1; then
   if ! initdb -D "$PGDATA" --auth=trust --username=user >/tmp/initdb.log 2>&1; then
     echo "initdb failed, switching to SQLite mode"
     export USE_SQLITE=true
   fi
+else
+  export USE_SQLITE=${USE_SQLITE:-true}
 fi
 
 if [ -z "$USE_SQLITE" ]; then
-  if ! pg_ctl -D "$PGDATA" -l "$PGDATA/logfile" start; then
+  if ! pg_ctl -D "$PGDATA" -l "$PGDATA/logfile" start >/tmp/pg_ctl.log 2>&1; then
     echo "PostgreSQL failed to start, switching to SQLite mode"
     export USE_SQLITE=true
   else
@@ -24,7 +27,7 @@ if [ -z "$USE_SQLITE" ]; then
   fi
 fi
 
-if [ ! -z "$USE_SQLITE" ]; then
+if [ -n "${USE_SQLITE:-}" ]; then
   echo "Running in SQLite fallback mode"
 fi
 

@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import sys
 from typing import Dict
 
 import requests
@@ -9,7 +10,8 @@ from openai import OpenAI
 
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+client = None
 
 SYSTEM_PROMPT = """
 You are a database migration expert.
@@ -22,8 +24,36 @@ Rules:
 """.strip()
 
 
+def _get_client() -> OpenAI:
+    global client
+    if client is None:
+        if not OPENAI_API_KEY:
+            raise RuntimeError("OPENAI_API_KEY is required to run the baseline agent.")
+        client = OpenAI(api_key=OPENAI_API_KEY)
+    return client
+
+
+def _parse_final_json(stdout: str) -> Dict[str, float]:
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        return {}
+    for line in reversed(lines):
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+    return {}
+
+
 def run_episode(task_id: str, seed: int = 42) -> float:
-    reset_response = requests.post(f"{BASE_URL}/reset", json={"task_id": task_id, "seed": seed}, timeout=30)
+    reset_response = requests.post(
+        f"{BASE_URL}/reset",
+        json={"task_id": task_id, "seed": seed},
+        timeout=30,
+    )
     reset_response.raise_for_status()
     observation = reset_response.json()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -38,7 +68,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             "Write the next SQL statement."
         )
         messages.append({"role": "user", "content": prompt})
-        completion = client.chat.completions.create(
+        completion = _get_client().chat.completions.create(
             model=MODEL,
             messages=messages,
             temperature=0.0,
@@ -81,4 +111,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(json.dumps({"error": str(exc)}))
+        sys.exit(1)

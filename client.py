@@ -1,3 +1,5 @@
+"""Type-safe client wrapper for ChronoMigrate-Env."""
+
 try:
     from openenv.core.client import HTTPEnvClient
     from openenv.core.models import StepResult
@@ -17,12 +19,15 @@ from models import MigrationAction, MigrationObservation, MigrationState
 
 
 class ChronoMigrateClient(HTTPEnvClient):
+    """Thin adapter that converts raw JSON payloads into typed models."""
+
     def _step_payload(self, action: MigrationAction) -> dict:
         return action.model_dump()
 
     def _parse_result(self, data: dict):
+        observation = data.get("observation", {})
         return StepResult(
-            observation=MigrationObservation(**data["observation"]),
+            observation=MigrationObservation(**observation),
             reward=data["reward"],
             done=data["done"],
             metadata=data.get("metadata", {}),
