@@ -10,10 +10,15 @@ ChronoMigrate-Env is an OpenEnv-style environment for database schema migrations
 |---|---|
 | `POST /reset` | Start a new episode for a task |
 | `POST /step` | Execute one SQL action |
+| `GET /state` | Inspect the active episode state |
 | `GET /tasks` | List available tasks and action schema |
 | `POST /grader` | Score the completed episode |
 | `POST /baseline` | Run the baseline agent across all tasks |
 | `GET /health` | Lightweight health check |
+| `GET /metadata` | Environment name, description, runtime, and tags |
+| `GET /schema` | Action, observation, and state JSON schemas |
+| `POST /mcp` | JSON-RPC compatibility stub |
+| `GET /` and `GET /web` | Lightweight HTML landing page for smoke checks |
 
 ## Data Contract
 
@@ -72,9 +77,24 @@ Recommended quick checks before shipping:
 
 ```bash
 python -m pytest -q
+openenv validate --url http://127.0.0.1:7860
 python baseline/baseline_agent.py --all-tasks
 ```
+
+`baseline/baseline_agent.py` reads `OPENAI_API_KEY` and uses the OpenAI API directly. Set `ENV_BASE_URL` if the environment is not running on `http://localhost:7860`.
+
+The local test suite covers:
+
+| Area | Coverage |
+|---|---|
+| Model contracts | Required fields, defaults, and JSON schema shape |
+| Runtime episode flow | Reset, step, task mismatch, and grader behavior |
+| Contract endpoints | `/`, `/web`, `/health`, `/metadata`, `/schema`, `/mcp`, `/tasks`, `/reset`, `/step`, `/state` |
+| Database behavior | Transaction vs autocommit and deterministic data hashing |
+| Local realism checks | Seed sizes, DES determinism, lock profiling, and hard-task safe-pattern fallback |
 
 ## Notes
 
 The runtime keeps a SQLite fallback path so the environment can still boot when PostgreSQL is unavailable. The fallback is designed to preserve the same external contract, even if the backend is simplified.
+
+The FastAPI entrypoint is available as both `create_fastapi_app()` and `create_app()` in `server/app.py` so the repo stays compatible with the original build spec and the local test harness.

@@ -7,6 +7,11 @@ import sqlglot
 import sqlglot.expressions as exp
 
 
+def _normalize_partition_child_name(name: str) -> str:
+    match = re.search(r"_p(\d+)$", name.lower())
+    return f"p{match.group(1)}" if match else name.lower()
+
+
 def extract_schema_fingerprint(ddl: str) -> Dict[str, Any]:
     fingerprint: Dict[str, Any] = {
         "tables": {},
@@ -101,10 +106,17 @@ def compute_schema_match(current_ddl: str, target_ddl: str) -> float:
     if not target["tables"]:
         return 1.0
 
+    target_partition_tables = {
+        child
+        for children in target["partition_children"].values()
+        for child in children
+    }
     total = 0.0
     score = 0.0
 
     for table_name, target_table in target["tables"].items():
+        if table_name in target_partition_tables:
+            continue
         current_table = current["tables"].get(table_name, {"columns": {}, "foreign_keys": []})
 
         total += 1.0
@@ -135,14 +147,63 @@ def compute_schema_match(current_ddl: str, target_ddl: str) -> float:
         if current["partitions"].get(table_name) == partition_mode:
             score += 1.0
 
-        target_children = target["partition_children"].get(table_name, set())
-        current_children = current["partition_children"].get(table_name, set())
+        target_children = {
+            _normalize_partition_child_name(child)
+            for child in target["partition_children"].get(table_name, set())
+        }
+        current_children = {
+            _normalize_partition_child_name(child)
+            for child in current["partition_children"].get(table_name, set())
+        }
         for child in target_children:
             total += 0.5
             if child in current_children:
                 score += 0.5
 
-    return min(1.0, score / total) if total else 1.0
+    base_score = min(1.0, score / total) if total else 1.0
+
+    extra_columns = 0
+    extra_foreign_keys = 0
+    extra_partition_children = 0
+    extra_partition_modes = 0
+
+    for table_name, current_table in current["tables"].items():
+        target_table = target["tables"].get(table_name)
+        if target_table is None:
+            continue
+
+        extra_columns += len(set(current_table["columns"]) - set(target_table["columns"]))
+        extra_foreign_keys += len(
+            set(current_table["foreign_keys"]) - set(target_table["foreign_keys"])
+        )
+
+    for table_name, current_children in current["partition_children"].items():
+        target_children = target["partition_children"].get(table_name, set())
+        normalized_current_children = {
+            _normalize_partition_child_name(child) for child in current_children
+        }
+        normalized_target_children = {
+            _normalize_partition_child_name(child) for child in target_children
+        }
+        extra_partition_children += len(
+            normalized_current_children - normalized_target_children
+        )
+
+    for table_name, current_mode in current["partitions"].items():
+        target_mode = target["partitions"].get(table_name)
+        if target_mode is None:
+            continue
+        if current_mode != target_mode:
+            extra_partition_modes += 1
+
+    penalty = min(
+        0.2,
+        0.03 * extra_columns
+        + 0.04 * extra_foreign_keys
+        + 0.02 * extra_partition_children
+        + 0.05 * extra_partition_modes,
+    )
+    return max(0.0, min(1.0, base_score - penalty))
 
 
 def _sqlite_tables(conn: Any) -> List[str]:

@@ -110,12 +110,12 @@ def grade_hard(
         for match in re.finditer(r"CREATE TABLE\s+(\w+)\b", target_schema_ddl, re.IGNORECASE)
     }
     target_partitions = {
-        match.group(1).lower()
-        for match in re.finditer(r"CREATE TABLE\s+(events_p\d+)\b", target_schema_ddl, re.IGNORECASE)
+        match.group(1)
+        for match in re.finditer(r"CREATE TABLE\s+events_p(\d+)\b", target_schema_ddl, re.IGNORECASE)
     }
     current_partitions = {
-        match.group(1).lower()
-        for match in re.finditer(r"CREATE TABLE\s+(events_p\d+)\b", current_schema_ddl, re.IGNORECASE)
+        match.group(1)
+        for match in re.finditer(r"CREATE TABLE\s+events(?:_new)?_p(\d+)\b", current_schema_ddl, re.IGNORECASE)
     }
 
     table_alignment = (
@@ -147,8 +147,8 @@ def grade_hard(
     safe_pattern_score += 0.05 if steps_used >= 8 else 0.0
 
     structural_score = (table_alignment + partition_alignment + partition_mode) / 3.0
-    base_score = schema_match * data_integrity * availability_pct * (0.65 + 0.25 * structural_score)
-    return min(1.0, base_score + safe_pattern_score)
+    strategy_quality = min(1.0, 0.35 + 0.30 * structural_score + safe_pattern_score)
+    return min(1.0, schema_match * data_integrity * availability_pct * strategy_quality)
 
 
 TASK = TaskDefinition(

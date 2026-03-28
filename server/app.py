@@ -3,7 +3,8 @@ import subprocess
 import sys
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from models import MigrationAction, MigrationObservation, MigrationState
@@ -26,31 +27,44 @@ ENV_TAGS = [
 
 
 env = ChronoMigrateEnv()
-app = FastAPI(
-    title="ChronoMigrate-Env",
-    version=ENV_VERSION,
-    description=ENV_DESCRIPTION,
-)
+router = APIRouter()
 
 
-@app.get("/health")
+def create_fastapi_app() -> FastAPI:
+    fastapi_app = FastAPI(
+        title="ChronoMigrate-Env",
+        version=ENV_VERSION,
+        description=ENV_DESCRIPTION,
+    )
+    fastapi_app.include_router(router)
+    return fastapi_app
+
+
+def create_app() -> FastAPI:
+    return create_fastapi_app()
+
+
+@router.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "healthy"}
 
 
-@app.get("/metadata")
+@router.get("/metadata")
 def metadata() -> Dict[str, object]:
     return {
         "name": ENV_NAME,
         "version": ENV_VERSION,
         "description": ENV_DESCRIPTION,
+        "action": "MigrationAction",
+        "observation": "MigrationObservation",
+        "state": "MigrationState",
         "runtime": "docker",
         "tags": ENV_TAGS,
         "mcp_enabled": False,
     }
 
 
-@app.get("/schema")
+@router.get("/schema")
 def schema() -> Dict[str, dict]:
     return {
         "action": MigrationAction.model_json_schema(),
@@ -66,7 +80,7 @@ class MCPRequest(BaseModel):
     params: Optional[dict] = None
 
 
-@app.post("/mcp")
+@router.post("/mcp")
 def mcp(request: MCPRequest) -> Dict[str, object]:
     return {
         "jsonrpc": "2.0",
@@ -75,7 +89,51 @@ def mcp(request: MCPRequest) -> Dict[str, object]:
     }
 
 
-@app.post("/reset", response_model=MigrationObservation)
+@router.get("/", response_class=HTMLResponse)
+@router.get("/web", response_class=HTMLResponse)
+def web() -> str:
+    tasks = "".join(
+        f"<li><strong>{task.task_id}</strong>: {task.description}</li>"
+        for task in TASKS.values()
+    )
+    return f"""
+    <html>
+      <head>
+        <title>ChronoMigrate-Env</title>
+        <style>
+          body {{
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            background: #f4f1ea;
+            color: #1d1d1d;
+            margin: 0;
+            padding: 2rem;
+          }}
+          main {{
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border: 1px solid #d8d1c5;
+            padding: 2rem;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.05);
+          }}
+          code {{ background: #f1ece2; padding: 0.15rem 0.35rem; border-radius: 6px; }}
+        </style>
+      </head>
+      <body>
+        <main>
+          <h1>ChronoMigrate-Env</h1>
+          <p>{ENV_DESCRIPTION}</p>
+          <p>Core endpoints: <code>/reset</code>, <code>/step</code>, <code>/state</code>, <code>/tasks</code>, <code>/grader</code>, <code>/baseline</code>.</p>
+          <h2>Tasks</h2>
+          <ul>{tasks}</ul>
+        </main>
+      </body>
+    </html>
+    """
+
+
+@router.post("/reset", response_model=MigrationObservation)
 def reset(config: Optional[dict] = None):
     try:
         return env.reset(config or {})
@@ -83,7 +141,7 @@ def reset(config: Optional[dict] = None):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/step")
+@router.post("/step")
 def step(action: MigrationAction):
     try:
         observation = env.step(action)
@@ -98,7 +156,7 @@ def step(action: MigrationAction):
     }
 
 
-@app.get("/state")
+@router.get("/state")
 def state():
     try:
         return env.state()
@@ -106,7 +164,7 @@ def state():
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/tasks")
+@router.get("/tasks")
 def list_tasks() -> List[Dict]:
     return [
         {
@@ -129,7 +187,7 @@ class GraderRequest(BaseModel):
     episode_id: Optional[str] = None
 
 
-@app.post("/grader")
+@router.post("/grader")
 def grade_episode(req: GraderRequest) -> Dict:
     try:
         state = env.state()
@@ -182,7 +240,7 @@ def _generate_feedback(score: float, schema_match: float, availability: float) -
     )
 
 
-@app.post("/baseline")
+@router.post("/baseline")
 def run_baseline() -> Dict:
     try:
         result = subprocess.run(
@@ -197,3 +255,6 @@ def run_baseline() -> Dict:
         return {"baseline_scores": payload, "status": "ok" if result.returncode == 0 else "error"}
     except Exception as exc:
         return {"baseline_scores": {}, "status": f"error: {exc}"}
+
+
+app = create_fastapi_app()

@@ -84,8 +84,126 @@ class DBManager:
     def _shadow_table_body(self, table_name: str) -> str:
         return self._extract_table_body(self._shadow_ddl, table_name)
 
-    def _sqlite_columns_for_table(self, table_name: str) -> str:
+    def _resolved_shadow_table_body(self, table_name: str, seen: Optional[set[str]] = None) -> str:
+        seen = seen or set()
+        normalized_name = table_name.lower()
+        if normalized_name in seen:
+            return self._shadow_table_body(table_name)
+        seen.add(normalized_name)
+
+        body = self._shadow_table_body(table_name).strip()
+        like_match = re.fullmatch(
+            r"LIKE\s+(\w+)\s+INCLUDING\s+ALL",
+            body,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if like_match:
+            return self._resolved_shadow_table_body(like_match.group(1), seen)
+        return body
+
+    def _shadow_table_names(self) -> List[str]:
+        return [
+            match.group(1)
+            for match in re.finditer(r"CREATE TABLE\s+(\w+)\b", self._shadow_ddl, re.IGNORECASE)
+        ]
+
+    def _column_exists_in_shadow(self, table_name: str, column_name: str) -> bool:
         body = self._shadow_table_body(table_name)
+        if not body:
+            return False
+
+        for clause in self._split_top_level_commas(body):
+            if clause.upper().startswith("CONSTRAINT"):
+                continue
+            tokens = clause.strip().split()
+            if tokens and tokens[0].strip('"').lower() == column_name.lower():
+                return True
+        return False
+
+    def _constraint_exists_in_shadow(self, table_name: str, constraint_name: str) -> bool:
+        body = self._shadow_table_body(table_name)
+        if not body:
+            return False
+        pattern = re.compile(
+            rf"\bCONSTRAINT\s+{re.escape(constraint_name)}\b",
+            re.IGNORECASE,
+        )
+        return bool(pattern.search(body))
+
+    def _foreign_keys_referencing(self, table_name: str, column_name: str) -> List[Tuple[str, str]]:
+        references: List[Tuple[str, str]] = []
+        target = rf"REFERENCES\s+{re.escape(table_name)}\s*\(\s*{re.escape(column_name)}\s*\)"
+        pattern = re.compile(
+            rf"\bCONSTRAINT\s+(\w+)\b.*?{target}",
+            re.IGNORECASE | re.DOTALL,
+        )
+        for shadow_table in self._shadow_table_names():
+            body = self._shadow_table_body(shadow_table)
+            if not body:
+                continue
+            for match in pattern.finditer(body):
+                references.append((shadow_table, match.group(1)))
+        return references
+
+    def _preflight_statement(self, statement: str) -> Optional[str]:
+        statement = statement.strip().rstrip(";")
+        upper = statement.upper()
+        if not statement:
+            return None
+
+        if upper.startswith("ALTER TABLE") and "DROP CONSTRAINT" in upper:
+            match = re.search(
+                r"ALTER TABLE\s+(\w+)\s+DROP CONSTRAINT\s+(\w+)",
+                statement,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                table_name, constraint_name = match.groups()
+                if not self._constraint_exists_in_shadow(table_name, constraint_name):
+                    return f"constraint {constraint_name} does not exist on {table_name}"
+            return None
+
+        if upper.startswith("ALTER TABLE") and "RENAME COLUMN" in upper:
+            match = re.search(
+                r"ALTER TABLE\s+(\w+)\s+RENAME COLUMN\s+(\w+)\s+TO\s+(\w+)",
+                statement,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                table_name, old_name, _ = match.groups()
+                references = self._foreign_keys_referencing(table_name, old_name)
+                if references:
+                    details = ", ".join(
+                        f"{ref_table}.{constraint_name}"
+                        for ref_table, constraint_name in references
+                    )
+                    return (
+                        f"foreign key constraint still references {table_name}({old_name}); "
+                        f"drop referencing constraint(s) first: {details}"
+                    )
+            return None
+
+        if upper.startswith("ALTER TABLE") and "ADD CONSTRAINT" in upper and "FOREIGN KEY" in upper:
+            match = re.search(
+                r"ALTER TABLE\s+(\w+)\s+ADD CONSTRAINT\s+(\w+)\s+FOREIGN KEY\s*"
+                r"\(\s*(\w+)\s*\)\s+REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)",
+                statement,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if match:
+                table_name, constraint_name, local_column, ref_table, ref_column = match.groups()
+                if self._constraint_exists_in_shadow(table_name, constraint_name):
+                    return f"constraint {constraint_name} already exists on {table_name}"
+                if not self._column_exists_in_shadow(table_name, local_column):
+                    return f"column {table_name}.{local_column} does not exist for foreign key"
+                if not self._column_exists_in_shadow(ref_table, ref_column):
+                    return f"referenced column {ref_table}.{ref_column} does not exist"
+            return None
+
+        return None
+
+    def _sqlite_columns_for_table(self, table_name: str) -> str:
+        body = self._resolved_shadow_table_body(table_name)
         if not body:
             return "id INTEGER"
 
@@ -102,6 +220,26 @@ class DBManager:
         for clause in clauses:
             translated.append(self._normalize_sqlite_statement(clause))
         return ", ".join(translated)
+
+    def _expand_like_create_for_shadow(self, statement: str) -> str:
+        stripped = statement.strip().rstrip(";")
+        like_partition = re.match(
+            r"CREATE TABLE\s+(\w+)\s*\(LIKE\s+(\w+)\s+INCLUDING\s+ALL\)\s*(PARTITION BY\s+[A-Z]+\s*\([^)]+\))?\s*$",
+            stripped,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not like_partition:
+            return stripped
+
+        table_name, parent_name, partition_clause = like_partition.groups()
+        parent_body = self._resolved_shadow_table_body(parent_name)
+        if not parent_body:
+            return stripped
+
+        expanded = f"CREATE TABLE {table_name} (\n{parent_body.strip()}\n)"
+        if partition_clause:
+            expanded += f" {partition_clause.strip()}"
+        return expanded
 
     def _translate_create_table_sqlite(self, statement: str) -> str:
         stripped = statement.strip().rstrip(";")
@@ -138,6 +276,8 @@ class DBManager:
         upper = statement.strip().upper()
         if upper.startswith("CREATE TABLE"):
             return self._translate_create_table_sqlite(statement)
+        if upper.startswith("DROP TABLE") and "CASCADE" in upper:
+            return re.sub(r"\s+CASCADE\b", "", statement, flags=re.IGNORECASE)
         if upper.startswith("ALTER TABLE") and "DROP CONSTRAINT" in upper:
             return "SELECT 1"
         if upper.startswith("ALTER TABLE") and "ADD CONSTRAINT" in upper:
@@ -176,6 +316,12 @@ class DBManager:
             normalized,
             flags=re.IGNORECASE | re.DOTALL,
         )
+        normalized = re.sub(
+            r"\bDROP TABLE\s+(\w+)\s+CASCADE\b",
+            r"DROP TABLE \1",
+            normalized,
+            flags=re.IGNORECASE,
+        )
         return normalized
 
     def execute(
@@ -200,6 +346,9 @@ class DBManager:
 
             cursor = self.conn.cursor()
             for statement in self._split_sql(sql):
+                preflight_error = self._preflight_statement(statement)
+                if preflight_error:
+                    raise RuntimeError(preflight_error)
                 runnable = self._translate_sqlite_statement(statement) if self.backend == "sqlite" else statement
                 cursor.execute(runnable, params or [])
                 try:
@@ -280,12 +429,6 @@ class DBManager:
                     count=1,
                     flags=re.IGNORECASE | re.DOTALL,
                 )
-                self._shadow_ddl = re.sub(
-                    rf"REFERENCES\s+{re.escape(table)}\s*\(\s*{re.escape(old)}\s*\)",
-                    f"REFERENCES {table}({new})",
-                    self._shadow_ddl,
-                    flags=re.IGNORECASE,
-                )
             return
 
         if upper.startswith("ALTER TABLE") and "DROP CONSTRAINT" in upper:
@@ -333,9 +476,16 @@ class DBManager:
                     self._shadow_ddl,
                     flags=re.IGNORECASE,
                 )
+                self._shadow_ddl = re.sub(
+                    rf"\b{re.escape(old)}_p(\d+)\b",
+                    rf"{new}_p\1",
+                    self._shadow_ddl,
+                    flags=re.IGNORECASE,
+                )
             return
 
         if upper.startswith("CREATE TABLE"):
+            statement = self._expand_like_create_for_shadow(statement)
             if self._shadow_ddl:
                 self._shadow_ddl += "\n\n" + statement + ";"
             else:
@@ -343,11 +493,35 @@ class DBManager:
             return
 
         if upper.startswith("DROP TABLE"):
-            match = re.search(r"DROP TABLE\s+(\w+)", statement, flags=re.IGNORECASE)
+            match = re.search(
+                r"DROP TABLE\s+(\w+)(?:\s+CASCADE)?",
+                statement,
+                flags=re.IGNORECASE,
+            )
             if match:
                 table = match.group(1)
+                cascade = "CASCADE" in upper
+                child_tables = re.findall(
+                    rf"CREATE TABLE\s+(\w+)\s+PARTITION OF\s+{re.escape(table)}\b",
+                    self._shadow_ddl,
+                    flags=re.IGNORECASE,
+                )
                 self._shadow_ddl = re.sub(
                     rf"CREATE TABLE\s+{re.escape(table)}.*?;\s*",
+                    "",
+                    self._shadow_ddl,
+                    flags=re.IGNORECASE | re.DOTALL,
+                ).strip()
+                if cascade:
+                    for child_table in child_tables:
+                        self._shadow_ddl = re.sub(
+                            rf"CREATE TABLE\s+{re.escape(child_table)}.*?;\s*",
+                            "",
+                            self._shadow_ddl,
+                            flags=re.IGNORECASE | re.DOTALL,
+                        ).strip()
+                self._shadow_ddl = re.sub(
+                    rf"CREATE TABLE\s+\w+\s+PARTITION OF\s+{re.escape(table)}\b.*?;\s*",
                     "",
                     self._shadow_ddl,
                     flags=re.IGNORECASE | re.DOTALL,
