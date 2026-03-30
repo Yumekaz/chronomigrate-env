@@ -1,3 +1,13 @@
+---
+title: ChronoMigrate Env
+emoji: "📊"
+colorFrom: gray
+colorTo: red
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # ChronoMigrate-Env
 **Zero-Downtime Database Migration RL Environment**
 
