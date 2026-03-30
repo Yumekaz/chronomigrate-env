@@ -58,7 +58,7 @@ separate final verification step.
 
 ## Setup
 ```bash
-git clone https://huggingface.co/spaces/YOUR_HF_USERNAME/chronomigrate-env
+git clone https://huggingface.co/spaces/Tarun431/chronomigrate-env
 cd chronomigrate-env
 docker build -t chronomigrate-env .
 docker run -p 7860:7860 -e OPENAI_API_KEY=your_key chronomigrate-env
@@ -97,9 +97,12 @@ Verified locally so far:
 - Dockerized runtime boots successfully on PostgreSQL
 - `openenv validate` passes against the running container
 - local Qwen verification on PostgreSQL reaches `easy=1.0`, `medium=0.6731`, `hard=0.244`
+- Hugging Face Space is live at `https://tarun431-chronomigrate-env.hf.space`
+- public `openenv validate` passes against the HF Space
+- public `/tasks`, `/reset`, `/state`, `/step`, and `/grader` respond correctly on the HF Space
 
 Still pending before final submission:
-- Hugging Face Space deployment and public URL checks
+- configure `OPENAI_API_KEY` for the HF Space if `/baseline` should run there
 - paid OpenAI baseline run and final GPT-4o-mini score capture
 
 ## Notes
