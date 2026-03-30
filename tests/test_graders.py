@@ -1,5 +1,6 @@
 import sqlite3
 import shutil
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -262,6 +263,32 @@ def test_reset_and_step_contract_through_http():
     body = step.json()
     assert body["observation"]["task_id"] == "easy_add_column"
     assert "metadata" in body
+
+
+def test_baseline_endpoint_returns_script_scores(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "easy_add_column: 1.0000\n"
+                "medium_rename_fk: 0.6731\n"
+                "hard_repartition: 0.2440\n"
+                '{"easy_add_column": 1.0, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}'
+            ),
+        )
+
+    monkeypatch.setattr("server.app.subprocess.run", fake_run)
+    client = TestClient(app)
+    response = client.post("/baseline")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["baseline_scores"] == {
+        "easy_add_column": 1.0,
+        "medium_rename_fk": 0.6731,
+        "hard_repartition": 0.244,
+    }
 
 
 def test_execute_mode_transaction_rolls_back_on_error():

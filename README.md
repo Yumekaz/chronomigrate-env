@@ -45,7 +45,10 @@ The current repository implements:
 | `hard_repartition` | Hard | Repartition a table under load |
 
 ## Baseline Scores (GPT-4o-mini)
-The baseline script is implemented in [baseline/baseline_agent.py](C:/Users/patha/Desktop/chronomigrate-env/baseline/baseline_agent.py) and uses the OpenAI API.
+The baseline script is implemented in `baseline/baseline_agent.py` and uses the
+OpenAI API exactly as required by the build bible. The table below reflects the
+target score band from the build bible; the actual paid baseline run is still a
+separate final verification step.
 
 | Task | Score |
 |---|---|
@@ -80,6 +83,8 @@ async with ChronoMigrateClient(base_url="http://localhost:7860") as env:
 Recommended local checks:
 ```bash
 python -m pytest -q
+docker build -t chronomigrate-env .
+docker run --rm -p 7860:7860 chronomigrate-env
 openenv validate --url http://127.0.0.1:7860
 python baseline/baseline_agent.py --all-tasks
 ```
@@ -87,9 +92,18 @@ python baseline/baseline_agent.py --all-tasks
 If the environment is running locally, verify the main contract endpoints:
 `/tasks`, `/reset`, `/step`, `/state`, `/grader`, and `/baseline`.
 
+Verified locally so far:
+- Docker image builds successfully
+- Dockerized runtime boots successfully on PostgreSQL
+- `openenv validate` passes against the running container
+- local Qwen verification on PostgreSQL reaches `easy=1.0`, `medium=0.6731`, `hard=0.244`
+
+Still pending before final submission:
+- Hugging Face Space deployment and public URL checks
+- paid OpenAI baseline run and final GPT-4o-mini score capture
+
 ## Notes
 The runtime includes a SQLite fallback path so the environment can still boot
 when PostgreSQL is unavailable. The FastAPI app is implemented in
-[server/app.py](C:/Users/patha/Desktop/chronomigrate-env/server/app.py), and the
-core environment logic lives in
-[server/chrono_migrate_env.py](C:/Users/patha/Desktop/chronomigrate-env/server/chrono_migrate_env.py).
+`server/app.py`, and the core environment logic lives in
+`server/chrono_migrate_env.py`.
