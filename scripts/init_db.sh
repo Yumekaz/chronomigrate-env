@@ -26,11 +26,11 @@ else
 fi
 
 if [ -z "${USE_SQLITE:-}" ] && [ "$start_postgres" = true ]; then
-  if command -v pg_ctl >/dev/null 2>&1 && pg_ctl -D "$PGDATA" -l "$PGDATA/logfile" start >/tmp/pg_ctl.log 2>&1; then
+  if command -v pg_ctl >/dev/null 2>&1 && pg_ctl -D "$PGDATA" -o "-p $PGPORT -k $PGDATA" -l "$PGDATA/logfile" start >/tmp/pg_ctl.log 2>&1; then
     sleep 2
     if pg_ctl -D "$PGDATA" status >/tmp/pg_status.log 2>&1; then
       if command -v createdb >/dev/null 2>&1; then
-        createdb -p "$PGPORT" chronomigrate 2>/dev/null || true
+        createdb -h 127.0.0.1 -p "$PGPORT" chronomigrate 2>/dev/null || true
       fi
     else
       echo "PostgreSQL failed to reach healthy status, switching to SQLite mode"
