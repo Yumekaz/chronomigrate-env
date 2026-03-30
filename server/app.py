@@ -217,11 +217,12 @@ def grade_episode(req: GraderRequest) -> Dict:
 def _generate_feedback(
     schema_match: float, availability: float, data_integrity: float
 ) -> str:
+    schema_complete = schema_match >= 0.999
     if data_integrity == 0.0:
         return "FAIL: Data integrity compromised. Rows dropped or corrupted."
-    if schema_match >= 1.0 and availability >= 0.9:
+    if schema_complete and availability >= 0.9:
         return "PASS: Perfect zero-downtime migration achieved."
-    if schema_match >= 1.0:
+    if schema_complete:
         return (
             f"PARTIAL: Schema correct but {(1 - availability) * 100:.1f}% downtime occurred."
         )

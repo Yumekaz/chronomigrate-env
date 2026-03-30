@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from models import MigrationAction
 from server.app import (
     GraderRequest,
+    _generate_feedback,
     app,
     create_app,
     create_fastapi_app,
@@ -238,6 +239,11 @@ def test_grader_rejects_episode_id_mismatch():
     assert "mismatch" in result["feedback"].lower()
 
 
+def test_feedback_uses_completion_tolerance_for_pass_case():
+    feedback = _generate_feedback(0.9999999999, 1.0, 1.0)
+    assert feedback == "PASS: Perfect zero-downtime migration achieved."
+
+
 def test_reset_and_step_contract_through_http():
     client = TestClient(app)
     reset = client.post("/reset", json={"task_id": "easy_add_column", "seed": 42})
@@ -282,6 +288,26 @@ def test_execute_mode_autocommit_keeps_prior_statement_on_error():
     assert "staging" in db.get_schema_ddl().lower()
 
 
+def test_sqlite_fallback_supports_multi_add_column_statement():
+    task = TASKS["easy_add_column"]
+    db = DBManager()
+    db.reset_to_schema(task.starting_schema_sql, task.seed_data_sql)
+
+    ok, error, _ = db.execute(
+        (
+            "ALTER TABLE users "
+            "ADD COLUMN email VARCHAR(255) DEFAULT NULL, "
+            "ADD COLUMN is_active BOOLEAN DEFAULT TRUE;"
+        ),
+        execute_mode="transaction",
+    )
+
+    assert ok is True, error
+    ddl = db.get_schema_ddl().lower()
+    assert "email varchar(255) default null" in ddl
+    assert "is_active boolean default true" in ddl
+
+
 def test_medium_fk_rename_requires_constraint_drop_first():
     db = DBManager()
     schema = """
@@ -306,6 +332,34 @@ def test_medium_fk_rename_requires_constraint_drop_first():
     )
     assert ok is False
     assert "drop referencing constraint" in error.lower()
+
+
+def test_medium_drop_constraint_if_exists_is_accepted_in_sqlite_fallback():
+    db = DBManager()
+    schema = """
+    CREATE TABLE users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(100) NOT NULL
+    );
+    CREATE TABLE orders (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+    """
+    seed = """
+    INSERT INTO users (id, username) VALUES (1, 'user_0001');
+    INSERT INTO orders (id, user_id) VALUES (1, 1);
+    """
+    db.reset_to_schema(schema, seed)
+
+    ok, error, _ = db.execute(
+        "ALTER TABLE orders DROP CONSTRAINT IF EXISTS fk_orders_users;",
+        execute_mode="transaction",
+    )
+
+    assert ok is True, error
+    assert "fk_orders_users" not in db.get_schema_ddl().lower()
 
 
 def test_medium_fk_sequence_reaches_target_shadow_schema():

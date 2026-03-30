@@ -43,6 +43,32 @@ class DBManager:
     def _split_sql(self, sql: str) -> List[str]:
         return [part.strip() for part in sql.split(";") if part.strip()]
 
+    def _expand_add_column_statements(self, statement: str) -> List[str]:
+        stripped = statement.strip().rstrip(";")
+        match = re.match(
+            r"ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(.+)$",
+            stripped,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not match:
+            return [stripped]
+
+        table_name, remainder = match.groups()
+        fragments = self._split_top_level_commas(remainder)
+        if len(fragments) <= 1:
+            return [stripped]
+
+        expanded = []
+        for fragment in fragments:
+            normalized = re.sub(
+                r"^ADD COLUMN\s+",
+                "",
+                fragment.strip(),
+                flags=re.IGNORECASE,
+            )
+            expanded.append(f"ALTER TABLE {table_name} ADD COLUMN {normalized}")
+        return expanded
+
     def _split_top_level_commas(self, text: str) -> List[str]:
         parts: List[str] = []
         depth = 0
@@ -153,12 +179,14 @@ class DBManager:
 
         if upper.startswith("ALTER TABLE") and "DROP CONSTRAINT" in upper:
             match = re.search(
-                r"ALTER TABLE\s+(\w+)\s+DROP CONSTRAINT\s+(\w+)",
+                r"ALTER TABLE\s+(\w+)\s+DROP CONSTRAINT(\s+IF EXISTS)?\s+(\w+)",
                 statement,
                 flags=re.IGNORECASE,
             )
             if match:
-                table_name, constraint_name = match.groups()
+                table_name, if_exists_clause, constraint_name = match.groups()
+                if if_exists_clause:
+                    return None
                 if not self._constraint_exists_in_shadow(table_name, constraint_name):
                     return f"constraint {constraint_name} does not exist on {table_name}"
             return None
@@ -346,19 +374,29 @@ class DBManager:
 
             cursor = self.conn.cursor()
             for statement in self._split_sql(sql):
-                preflight_error = self._preflight_statement(statement)
-                if preflight_error:
-                    raise RuntimeError(preflight_error)
-                runnable = self._translate_sqlite_statement(statement) if self.backend == "sqlite" else statement
-                cursor.execute(runnable, params or [])
-                try:
-                    rows = cursor.fetchall()
-                except Exception:
-                    rows = []
-                if track_shadow:
-                    self._apply_shadow_schema_change(statement)
-                if execute_mode == "autocommit" and self.backend == "sqlite":
-                    self.conn.commit()
+                expanded_statements = (
+                    self._expand_add_column_statements(statement)
+                    if self.backend == "sqlite"
+                    else [statement.strip().rstrip(";")]
+                )
+                for expanded_statement in expanded_statements:
+                    preflight_error = self._preflight_statement(expanded_statement)
+                    if preflight_error:
+                        raise RuntimeError(preflight_error)
+                    runnable = (
+                        self._translate_sqlite_statement(expanded_statement)
+                        if self.backend == "sqlite"
+                        else expanded_statement
+                    )
+                    cursor.execute(runnable, params or [])
+                    try:
+                        rows = cursor.fetchall()
+                    except Exception:
+                        rows = []
+                    if track_shadow:
+                        self._apply_shadow_schema_change(expanded_statement)
+                    if execute_mode == "autocommit" and self.backend == "sqlite":
+                        self.conn.commit()
             if execute_mode == "transaction":
                 self.conn.commit()
             return True, "SUCCESS", rows
@@ -411,7 +449,14 @@ class DBManager:
             )
             if match:
                 table, column_def = match.groups()
-                self._insert_into_table(table, column_def.strip())
+                for fragment in self._split_top_level_commas(column_def):
+                    normalized = re.sub(
+                        r"^ADD COLUMN\s+",
+                        "",
+                        fragment.strip(),
+                        flags=re.IGNORECASE,
+                    )
+                    self._insert_into_table(table, normalized)
             return
 
         if upper.startswith("ALTER TABLE") and "RENAME COLUMN" in upper:
@@ -433,7 +478,7 @@ class DBManager:
 
         if upper.startswith("ALTER TABLE") and "DROP CONSTRAINT" in upper:
             match = re.search(
-                r"ALTER TABLE\s+(\w+)\s+DROP CONSTRAINT\s+(\w+)",
+                r"ALTER TABLE\s+(\w+)\s+DROP CONSTRAINT(?:\s+IF EXISTS)?\s+(\w+)",
                 statement,
                 flags=re.IGNORECASE,
             )
