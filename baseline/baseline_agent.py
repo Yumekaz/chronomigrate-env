@@ -9,18 +9,25 @@ from openai import OpenAI
 
 
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+MODEL = "gpt-4o-mini"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 client = None
 
 SYSTEM_PROMPT = """
-You are a database migration expert.
-You will receive the current schema, target schema, last SQL result, downtime,
-and schema match progress. Return exactly one SQL statement ending with a semicolon.
+You are a database migration expert. You will be given:
+1. current_schema_ddl: the current database schema
+2. target_schema_ddl: the target schema you must achieve
+3. last_sql_result: result of your last SQL command
+4. downtime_pct: percentage of queries that failed due to your last action
+
+Your goal: write SQL commands to migrate from current to target schema.
+
 Rules:
-- Never use DROP TABLE, TRUNCATE, or DELETE without a WHERE clause
-- Prefer safe schema changes and minimal locking
-- Output SQL only, with no explanation
+- NEVER use DROP TABLE or TRUNCATE (destroys data, instant zero score)
+- Prefer CONCURRENTLY for index creation
+- For column renames, drop FK constraints first
+- Output ONLY a single SQL statement per turn, no explanations
+- Output format: just the SQL statement, ending with semicolon
 """.strip()
 
 
@@ -46,6 +53,18 @@ def _parse_final_json(stdout: str) -> Dict[str, float]:
             if isinstance(payload, dict):
                 return payload
     return {}
+
+
+def _normalize_sql(sql: str) -> str:
+    cleaned = (sql or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`").strip()
+        if cleaned.lower().startswith("sql"):
+            cleaned = cleaned[3:].strip()
+    cleaned = " ".join(line.strip() for line in cleaned.splitlines() if line.strip())
+    if cleaned and not cleaned.endswith(";"):
+        cleaned += ";"
+    return cleaned
 
 
 def run_episode(task_id: str, seed: int = 42) -> float:
@@ -74,7 +93,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             temperature=0.0,
             max_tokens=200,
         )
-        sql = (completion.choices[0].message.content or "").strip()
+        sql = _normalize_sql(completion.choices[0].message.content or "")
         messages.append({"role": "assistant", "content": sql})
 
         step_response = requests.post(

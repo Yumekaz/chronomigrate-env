@@ -1,62 +1,67 @@
 # ChronoMigrate-Env
-
 **Zero-Downtime Database Migration RL Environment**
 
-ChronoMigrate-Env is an OpenEnv-style environment for database schema migrations. An agent receives the current schema, the target schema, and runtime feedback about lock impact and schema progress, then issues SQL to complete the migration with minimal downtime.
+An OpenEnv-style environment for training agents to execute schema migrations
+without breaking availability or data integrity.
 
-## What It Exposes
+## Environment Description
+ChronoMigrate-Env simulates a live database migration workflow. An agent
+receives the current schema, the target schema, and feedback about lock
+impact, schema progress, and data safety, then issues SQL to move the
+database toward the target state.
 
-| Surface | Purpose |
-|---|---|
-| `POST /reset` | Start a new episode for a task |
-| `POST /step` | Execute one SQL action |
-| `GET /state` | Inspect the active episode state |
-| `GET /tasks` | List available tasks and action schema |
-| `POST /grader` | Score the completed episode |
-| `POST /baseline` | Run the baseline agent across all tasks |
-| `GET /health` | Lightweight health check |
-| `GET /metadata` | Environment name, description, runtime, and tags |
-| `GET /schema` | Action, observation, and state JSON schemas |
-| `POST /mcp` | JSON-RPC compatibility stub |
-| `GET /` and `GET /web` | Lightweight HTML landing page for smoke checks |
+The current repository implements:
+- `POST /reset`, `POST /step`, and `GET /state`
+- `GET /tasks`, `POST /grader`, and `POST /baseline`
+- A deterministic DES-style lock simulator
+- PostgreSQL-first execution with SQLite fallback
+- Three migration tasks with seeded data and task-specific graders
 
-## Data Contract
-
-| Field | Type | Notes |
+## Action Space
+| Field | Type | Description |
 |---|---|---|
 | `sql` | string | Raw SQL statement to execute |
-| `task_id` | string | Must match the active task |
+| `task_id` | string | Task being solved |
 | `execute_mode` | string | `transaction` or `autocommit` |
 
-| Observation Field | Type | Notes |
+## Observation Space
+| Field | Type | Description |
 |---|---|---|
-| `current_schema_ddl` | string | Current schema snapshot |
-| `target_schema_ddl` | string | Goal schema snapshot |
+| `current_schema_ddl` | string | Current schema as DDL |
+| `target_schema_ddl` | string | Target schema |
 | `last_sql_result` | string | `SUCCESS` or backend error |
 | `downtime_pct` | float | Failure rate for the latest step |
 | `step_count` | int | Episode step counter |
-| `cumulative_downtime_pct` | float | Rolling availability signal |
+| `cumulative_downtime_pct` | float | Rolling downtime signal |
 | `task_id` | string | Active task identifier |
 | `schema_match_pct` | float | Progress toward target schema |
 | `episode_id` | string | Unique episode id |
 
 ## Tasks
-
-| Task | Difficulty | Focus |
+| Task | Difficulty | Description |
 |---|---|---|
-| `easy_add_column` | Easy | Add two defaulted columns |
+| `easy_add_column` | Easy | Add two columns with DEFAULT values |
 | `medium_rename_fk` | Medium | Rename a primary-key column and repair foreign keys |
 | `hard_repartition` | Hard | Repartition a table under load |
 
-## Local Setup
+## Baseline Scores (GPT-4o-mini)
+The baseline script is implemented in [baseline/baseline_agent.py](C:/Users/patha/Desktop/chronomigrate-env/baseline/baseline_agent.py) and uses the OpenAI API.
 
+| Task | Score |
+|---|---|
+| `easy_add_column` | `~0.85` |
+| `medium_rename_fk` | `~0.55` |
+| `hard_repartition` | `~0.25` |
+
+## Setup
 ```bash
+git clone https://huggingface.co/spaces/YOUR_HF_USERNAME/chronomigrate-env
+cd chronomigrate-env
 docker build -t chronomigrate-env .
 docker run -p 7860:7860 -e OPENAI_API_KEY=your_key chronomigrate-env
 ```
 
-## Local Usage
-
+## Usage
 ```python
 from client import ChronoMigrateClient
 from models import MigrationAction
@@ -72,29 +77,19 @@ async with ChronoMigrateClient(base_url="http://localhost:7860") as env:
 ```
 
 ## Verification
-
-Recommended quick checks before shipping:
-
+Recommended local checks:
 ```bash
 python -m pytest -q
 openenv validate --url http://127.0.0.1:7860
 python baseline/baseline_agent.py --all-tasks
 ```
 
-`baseline/baseline_agent.py` reads `OPENAI_API_KEY` and uses the OpenAI API directly. Set `ENV_BASE_URL` if the environment is not running on `http://localhost:7860`.
-
-The local test suite covers:
-
-| Area | Coverage |
-|---|---|
-| Model contracts | Required fields, defaults, and JSON schema shape |
-| Runtime episode flow | Reset, step, task mismatch, and grader behavior |
-| Contract endpoints | `/`, `/web`, `/health`, `/metadata`, `/schema`, `/mcp`, `/tasks`, `/reset`, `/step`, `/state` |
-| Database behavior | Transaction vs autocommit and deterministic data hashing |
-| Local realism checks | Seed sizes, DES determinism, lock profiling, and hard-task safe-pattern fallback |
+If the environment is running locally, verify the main contract endpoints:
+`/tasks`, `/reset`, `/step`, `/state`, `/grader`, and `/baseline`.
 
 ## Notes
-
-The runtime keeps a SQLite fallback path so the environment can still boot when PostgreSQL is unavailable. The fallback is designed to preserve the same external contract, even if the backend is simplified.
-
-The FastAPI entrypoint is available as both `create_fastapi_app()` and `create_app()` in `server/app.py` so the repo stays compatible with the original build spec and the local test harness.
+The runtime includes a SQLite fallback path so the environment can still boot
+when PostgreSQL is unavailable. The FastAPI app is implemented in
+[server/app.py](C:/Users/patha/Desktop/chronomigrate-env/server/app.py), and the
+core environment logic lives in
+[server/chrono_migrate_env.py](C:/Users/patha/Desktop/chronomigrate-env/server/chrono_migrate_env.py).

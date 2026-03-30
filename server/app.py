@@ -3,9 +3,14 @@ import subprocess
 import sys
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+
+try:
+    from openenv.core.server import create_fastapi_app as create_openenv_fastapi_app
+except Exception:
+    create_openenv_fastapi_app = None
 
 from models import MigrationAction, MigrationObservation, MigrationState
 from server.chrono_migrate_env import ChronoMigrateEnv
@@ -25,31 +30,25 @@ ENV_TAGS = [
     "schema-migration",
 ]
 
-
 env = ChronoMigrateEnv()
-router = APIRouter()
 
 
-def create_fastapi_app() -> FastAPI:
-    fastapi_app = FastAPI(
-        title="ChronoMigrate-Env",
-        version=ENV_VERSION,
-        description=ENV_DESCRIPTION,
-    )
-    fastapi_app.include_router(router)
-    return fastapi_app
+class MCPRequest(BaseModel):
+    jsonrpc: str = "2.0"
+    id: Optional[object] = None
+    method: Optional[str] = None
+    params: Optional[dict] = None
 
 
-def create_app() -> FastAPI:
-    return create_fastapi_app()
+class GraderRequest(BaseModel):
+    task_id: str
+    episode_id: Optional[str] = None
 
 
-@router.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "healthy"}
 
 
-@router.get("/metadata")
 def metadata() -> Dict[str, object]:
     return {
         "name": ENV_NAME,
@@ -64,7 +63,6 @@ def metadata() -> Dict[str, object]:
     }
 
 
-@router.get("/schema")
 def schema() -> Dict[str, dict]:
     return {
         "action": MigrationAction.model_json_schema(),
@@ -73,14 +71,6 @@ def schema() -> Dict[str, dict]:
     }
 
 
-class MCPRequest(BaseModel):
-    jsonrpc: str = "2.0"
-    id: Optional[object] = None
-    method: Optional[str] = None
-    params: Optional[dict] = None
-
-
-@router.post("/mcp")
 def mcp(request: MCPRequest) -> Dict[str, object]:
     return {
         "jsonrpc": "2.0",
@@ -89,8 +79,6 @@ def mcp(request: MCPRequest) -> Dict[str, object]:
     }
 
 
-@router.get("/", response_class=HTMLResponse)
-@router.get("/web", response_class=HTMLResponse)
 def web() -> str:
     tasks = "".join(
         f"<li><strong>{task.task_id}</strong>: {task.description}</li>"
@@ -133,7 +121,6 @@ def web() -> str:
     """
 
 
-@router.post("/reset", response_model=MigrationObservation)
 def reset(config: Optional[dict] = None):
     try:
         return env.reset(config or {})
@@ -141,22 +128,20 @@ def reset(config: Optional[dict] = None):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/step")
 def step(action: MigrationAction):
     try:
         observation = env.step(action)
-        state = env.state()
+        current_state = env.state()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "observation": observation.model_dump(),
         "reward": env.last_step_reward,
-        "done": state.done,
+        "done": current_state.done,
         "metadata": env.last_metadata,
     }
 
 
-@router.get("/state")
 def state():
     try:
         return env.state()
@@ -164,7 +149,6 @@ def state():
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/tasks")
 def list_tasks() -> List[Dict]:
     return [
         {
@@ -182,65 +166,71 @@ def list_tasks() -> List[Dict]:
     ]
 
 
-class GraderRequest(BaseModel):
-    task_id: str
-    episode_id: Optional[str] = None
-
-
-@router.post("/grader")
 def grade_episode(req: GraderRequest) -> Dict:
     try:
-        state = env.state()
+        current_state = env.state()
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if state.task_id != req.task_id:
+    if current_state.task_id != req.task_id:
         return {"score": 0.0, "feedback": "No active episode for this task"}
-    if req.episode_id and req.episode_id != state.episode_id:
+    if req.episode_id and req.episode_id != current_state.episode_id:
         return {"score": 0.0, "feedback": "Episode ID mismatch for this task"}
 
-    total = state.total_background_queries
-    failed = state.failed_background_queries
+    total = current_state.total_background_queries
+    failed = current_state.failed_background_queries
     availability = 1.0 - (failed / total) if total else 1.0
+    data_integrity = (
+        1.0
+        if current_state.current_data_hash == current_state.data_integrity_hash
+        else 0.0
+    )
     task = TASKS[req.task_id]
     score = task.grade_fn(
-        state.current_schema_ddl,
-        state.target_schema_ddl,
-        state.data_integrity_hash,
-        state.current_data_hash,
+        current_state.current_schema_ddl,
+        current_state.target_schema_ddl,
+        current_state.data_integrity_hash,
+        current_state.current_data_hash,
         availability,
         action_history=env.action_history,
-        steps_used=state.step_count,
+        steps_used=current_state.step_count,
     )
     episode_reward = env.compute_terminal_reward(
-        final_schema_match=state.schema_match_pct,
+        final_schema_match=current_state.schema_match_pct,
         final_availability=availability,
-        data_integrity=1.0 if state.current_data_hash == state.data_integrity_hash else 0.0,
-        steps_used=state.step_count,
-        max_steps=state.max_steps,
+        data_integrity=data_integrity,
+        steps_used=current_state.step_count,
+        max_steps=current_state.max_steps,
     )
     return {
         "score": round(score, 4),
         "episode_reward": round(episode_reward, 4),
-        "schema_match": round(state.schema_match_pct, 4),
+        "schema_match": round(current_state.schema_match_pct, 4),
         "availability": round(availability, 4),
-        "data_integrity": 1.0 if state.current_data_hash == state.data_integrity_hash else 0.0,
-        "feedback": _generate_feedback(score, state.schema_match_pct, availability),
+        "data_integrity": data_integrity,
+        "feedback": _generate_feedback(
+            current_state.schema_match_pct, availability, data_integrity
+        ),
     }
 
 
-def _generate_feedback(score: float, schema_match: float, availability: float) -> str:
-    if score == 0.0:
-        return "FAIL: migration either destroyed data or made no safe progress."
-    if schema_match >= 0.999 and availability >= 0.9:
-        return "PASS: zero-downtime migration achieved."
+def _generate_feedback(
+    schema_match: float, availability: float, data_integrity: float
+) -> str:
+    if data_integrity == 0.0:
+        return "FAIL: Data integrity compromised. Rows dropped or corrupted."
+    if schema_match >= 1.0 and availability >= 0.9:
+        return "PASS: Perfect zero-downtime migration achieved."
+    if schema_match >= 1.0:
+        return (
+            f"PARTIAL: Schema correct but {(1 - availability) * 100:.1f}% downtime occurred."
+        )
     return (
-        f"PARTIAL: schema {schema_match * 100:.1f}% complete, "
+        f"PARTIAL: Schema {schema_match * 100:.1f}% complete, "
         f"availability {availability * 100:.1f}%."
     )
 
 
-@router.post("/baseline")
 def run_baseline() -> Dict:
     try:
         result = subprocess.run(
@@ -252,9 +242,59 @@ def run_baseline() -> Dict:
         )
         lines = [line for line in result.stdout.splitlines() if line.strip()]
         payload = json.loads(lines[-1]) if result.returncode == 0 and lines else {}
-        return {"baseline_scores": payload, "status": "ok" if result.returncode == 0 else "error"}
+        return {
+            "baseline_scores": payload,
+            "status": "ok" if result.returncode == 0 else "error",
+        }
     except Exception as exc:
         return {"baseline_scores": {}, "status": f"error: {exc}"}
+
+
+def _register_fallback_core_routes(fastapi_app: FastAPI) -> None:
+    fastapi_app.get("/health")(health)
+    fastapi_app.get("/", response_class=HTMLResponse)(web)
+    fastapi_app.get("/web", response_class=HTMLResponse)(web)
+    fastapi_app.post("/reset", response_model=MigrationObservation)(reset)
+    fastapi_app.post("/step")(step)
+    fastapi_app.get("/state")(state)
+
+
+def _register_common_routes(fastapi_app: FastAPI) -> None:
+    fastapi_app.get("/metadata")(metadata)
+    fastapi_app.get("/schema")(schema)
+    fastapi_app.post("/mcp")(mcp)
+    fastapi_app.get("/tasks")(list_tasks)
+    fastapi_app.post("/grader")(grade_episode)
+    fastapi_app.post("/baseline")(run_baseline)
+
+
+def create_fastapi_app() -> FastAPI:
+    if create_openenv_fastapi_app is not None:
+        try:
+            fastapi_app = create_openenv_fastapi_app(
+                env, MigrationAction, MigrationObservation
+            )
+        except Exception:
+            fastapi_app = FastAPI(
+                title="ChronoMigrate-Env",
+                version=ENV_VERSION,
+                description=ENV_DESCRIPTION,
+            )
+            _register_fallback_core_routes(fastapi_app)
+    else:
+        fastapi_app = FastAPI(
+            title="ChronoMigrate-Env",
+            version=ENV_VERSION,
+            description=ENV_DESCRIPTION,
+        )
+        _register_fallback_core_routes(fastapi_app)
+
+    _register_common_routes(fastapi_app)
+    return fastapi_app
+
+
+def create_app() -> FastAPI:
+    return create_fastapi_app()
 
 
 app = create_fastapi_app()

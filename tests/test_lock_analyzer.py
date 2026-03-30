@@ -20,18 +20,26 @@ def test_create_index_concurrently_is_safe():
     assert profile.lock_ticks == 0
 
 
-def test_rename_column_is_logged_as_exclusive():
+def test_rename_column_matches_docx_lock_profile():
     profile = analyze_lock("ALTER TABLE users RENAME COLUMN id TO user_id;")
-    assert profile.lock_type == "ACCESS_EXCLUSIVE"
+    assert profile.lock_type == "SHARE_UPDATE_EXCLUSIVE"
     assert profile.lock_ticks == 3
+    assert profile.failure_rate == 0.15
 
 
 def test_add_foreign_key_is_more_expensive_than_simple_add_column():
     profile = analyze_lock(
         "ALTER TABLE orders ADD CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(id);"
     )
-    assert profile.lock_type == "SHARE_ROW_EXCLUSIVE"
-    assert profile.lock_ticks == 4
+    assert profile.lock_type == "ACCESS_EXCLUSIVE"
+    assert profile.lock_ticks == 5
+    assert profile.failure_rate == 0.25
+
+
+def test_drop_old_table_cleanup_is_not_treated_as_data_loss():
+    profile = analyze_lock("DROP TABLE events_old CASCADE;")
+    assert profile.destroys_data is False
+    assert profile.lock_ticks == 5
 
 
 def test_invalid_sql_returns_no_lock():

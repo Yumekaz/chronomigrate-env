@@ -24,6 +24,9 @@ def _combine_profiles(left: LockProfile, right: LockProfile) -> LockProfile:
 
 def _analyze_statement(statement: exp.Expression, sql_text: str) -> LockProfile:
     if isinstance(statement, exp.Drop) and statement.args.get("kind") == "TABLE":
+        table_name = getattr(statement.this, "name", "").lower()
+        if table_name.endswith("_old"):
+            return LockProfile("ACCESS_EXCLUSIVE", 5, 0.25, False)
         return LockProfile("ACCESS_EXCLUSIVE", 20, 1.0, True)
 
     if isinstance(statement, exp.TruncateTable):
@@ -53,15 +56,15 @@ def _analyze_statement(statement: exp.Expression, sql_text: str) -> LockProfile:
         if "ALTER COLUMN" in sql_upper and "TYPE" in sql_upper:
             return LockProfile("ACCESS_EXCLUSIVE", 12, 0.9, False)
         if "RENAME COLUMN" in sql_upper:
-            return LockProfile("ACCESS_EXCLUSIVE", 3, 0.25, False)
+            return LockProfile("SHARE_UPDATE_EXCLUSIVE", 3, 0.15, False)
         if "RENAME TO" in sql_upper:
             return LockProfile("ACCESS_EXCLUSIVE", 1, 0.05, False)
         if "DROP COLUMN" in sql_upper:
             return LockProfile("ACCESS_EXCLUSIVE", 5, 0.4, False)
         if "DROP CONSTRAINT" in sql_upper:
-            return LockProfile("ACCESS_EXCLUSIVE", 2, 0.2, False)
+            return LockProfile("ACCESS_EXCLUSIVE", 5, 0.25, False)
         if "ADD CONSTRAINT" in sql_upper and "FOREIGN KEY" in sql_upper:
-            return LockProfile("SHARE_ROW_EXCLUSIVE", 4, 0.3, False)
+            return LockProfile("ACCESS_EXCLUSIVE", 5, 0.25, False)
         if "ADD COLUMN" in sql_upper:
             if "DEFAULT" in sql_upper:
                 return LockProfile("SHARE_UPDATE_EXCLUSIVE", 0, 0.0, False)
