@@ -105,6 +105,152 @@ def _repeats_failed_sql(sql: str, history: List[Dict[str, str]]) -> bool:
     return last.get("result") != "SUCCESS" and candidate == last.get("sql", "")
 
 
+def _extract_parent_table_statements(ddl: str) -> Dict[str, str]:
+    statements: Dict[str, str] = {}
+    pattern = re.compile(
+        r"(CREATE TABLE\s+(\w+)\s*\(.*?\)\s*(?:PARTITION BY\s+[A-Z]+\s*\([^)]+\))?;)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for statement, table_name in pattern.findall(ddl):
+        if "PARTITION OF" in statement.upper():
+            continue
+        statements[table_name.lower()] = _normalize_sql(statement)
+    return statements
+
+
+def _extract_partition_child_statements(ddl: str) -> List[Dict[str, str]]:
+    statements: List[Dict[str, str]] = []
+    pattern = re.compile(
+        r"(CREATE TABLE\s+(\w+)\s+PARTITION OF\s+(\w+)\b.*?;)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for statement, child_name, parent_name in pattern.findall(ddl):
+        statements.append(
+            {
+                "statement": _normalize_sql(statement),
+                "child": child_name.lower(),
+                "parent": parent_name.lower(),
+            }
+        )
+    return statements
+
+
+def _partition_modes(ddl: str) -> Dict[str, str]:
+    modes: Dict[str, str] = {}
+    pattern = re.compile(
+        r"CREATE TABLE\s+(\w+)\s*\(.*?\)\s*PARTITION BY\s+([A-Z]+)\s*\([^)]+\)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for table_name, partition_mode in pattern.findall(ddl):
+        modes[table_name.lower()] = partition_mode.upper()
+    return modes
+
+
+def _rewrite_replacement_statement(statement: str, source_table: str, replacement_table: str) -> str:
+    rewritten = re.sub(
+        rf"\bCREATE TABLE\s+{re.escape(source_table)}\b",
+        f"CREATE TABLE {replacement_table}",
+        statement,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return _normalize_sql(rewritten)
+
+
+def _rewrite_partition_child_statement(
+    statement: str, source_table: str, replacement_table: str, child_name: str
+) -> str:
+    if child_name.startswith(source_table):
+        replacement_child = replacement_table + child_name[len(source_table) :]
+    else:
+        replacement_child = f"{replacement_table}_{child_name}"
+
+    rewritten = re.sub(
+        rf"\bCREATE TABLE\s+{re.escape(child_name)}\b",
+        f"CREATE TABLE {replacement_child}",
+        statement,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    rewritten = re.sub(
+        rf"\bPARTITION OF\s+{re.escape(source_table)}\b",
+        f"PARTITION OF {replacement_table}",
+        rewritten,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return _normalize_sql(rewritten)
+
+
+def _is_stalled(history: List[Dict[str, str]]) -> bool:
+    if len(history) < 2:
+        return False
+    recent = history[-2:]
+    return all(round(float(item.get("schema_match", 0.0)), 4) == round(float(recent[0].get("schema_match", 0.0)), 4) for item in recent)
+
+
+def _generic_safe_fallback(observation: Dict[str, object], history: List[Dict[str, str]]) -> Optional[str]:
+    current_ddl = str(observation.get("current_schema_ddl", ""))
+    target_ddl = str(observation.get("target_schema_ddl", ""))
+    current_parents = _extract_parent_table_statements(current_ddl)
+    target_parents = _extract_parent_table_statements(target_ddl)
+    target_children = _extract_partition_child_statements(target_ddl)
+    current_modes = _partition_modes(current_ddl)
+    target_modes = _partition_modes(target_ddl)
+    successful_sql = {
+        _normalize_sql(entry.get("sql", ""))
+        for entry in history
+        if entry.get("result") == "SUCCESS"
+    }
+
+    for table_name, target_statement in target_parents.items():
+        current_statement = current_parents.get(table_name)
+        if not current_statement:
+            continue
+
+        current_mode = current_modes.get(table_name, "")
+        target_mode = target_modes.get(table_name, "")
+        if current_mode == target_mode:
+            continue
+
+        replacement_table = f"{table_name}_new"
+        backup_table = f"{table_name}_old"
+
+        if replacement_table not in current_parents:
+            return _rewrite_replacement_statement(target_statement, table_name, replacement_table)
+
+        for child in target_children:
+            if child["parent"] != table_name:
+                continue
+            replacement_child_sql = _rewrite_partition_child_statement(
+                child["statement"], table_name, replacement_table, child["child"]
+            )
+            replacement_child_name_match = re.search(
+                r"CREATE TABLE\s+(\w+)\b", replacement_child_sql, re.IGNORECASE
+            )
+            replacement_child_name = (
+                replacement_child_name_match.group(1).lower()
+                if replacement_child_name_match
+                else ""
+            )
+            if replacement_child_name and replacement_child_name not in current_parents:
+                return replacement_child_sql
+
+        copy_sql = f"INSERT INTO {replacement_table} SELECT * FROM {table_name};"
+        if copy_sql not in successful_sql:
+            return copy_sql
+
+        rename_old_sql = f"ALTER TABLE {table_name} RENAME TO {backup_table};"
+        if rename_old_sql not in successful_sql:
+            return rename_old_sql
+
+        rename_new_sql = f"ALTER TABLE {replacement_table} RENAME TO {table_name};"
+        if rename_new_sql not in successful_sql:
+            return rename_new_sql
+
+    return None
+
+
 def run_episode(task_id: str, seed: int = 42) -> float:
     reset_response = requests.post(
         f"{BASE_URL}/reset",
@@ -117,6 +263,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     history: List[Dict[str, str]] = []
 
     for _ in range(MAX_STEPS):
+        fallback_sql = _generic_safe_fallback(observation, history)
         prompt = (
             f"Task id: {task_id}\n\n"
             f"Current schema:\n{observation.get('current_schema_ddl', '')}\n\n"
@@ -136,7 +283,16 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             max_tokens=200,
         )
         sql = _normalize_sql(completion.choices[0].message.content or "")
-        if _is_obviously_unsafe_sql(sql) or _repeats_failed_sql(sql, history):
+        if fallback_sql and (
+            _is_obviously_unsafe_sql(sql)
+            or _repeats_failed_sql(sql, history)
+            or (
+                _is_stalled(history)
+                and float(observation.get("schema_match_pct", 0.0)) < 0.95
+            )
+        ):
+            sql = fallback_sql
+        elif _is_obviously_unsafe_sql(sql) or _repeats_failed_sql(sql, history):
             messages.append({"role": "assistant", "content": sql})
             messages.append(
                 {
@@ -169,6 +325,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             {
                 "sql": sql,
                 "result": str(observation.get("last_sql_result", "")),
+                "schema_match": str(observation.get("schema_match_pct", 0.0)),
             }
         )
         if payload.get("done"):
