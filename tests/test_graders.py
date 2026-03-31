@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from baseline.baseline_agent import _recommended_step, _select_sql
 from models import MigrationAction
 from server.app import (
     GraderRequest,
@@ -342,6 +343,87 @@ def test_baseline_endpoint_surfaces_script_error(monkeypatch):
     assert payload["baseline_scores"] == {}
     assert payload["error"] == "OPENAI_API_KEY is required to run the baseline agent."
     assert payload["returncode"] == 1
+
+
+def test_baseline_recommends_single_easy_add_both_columns_first():
+    observation = {
+        "current_schema_ddl": TASKS["easy_add_column"].starting_schema_sql,
+    }
+
+    sql = _recommended_step("easy_add_column", observation, [])
+
+    assert sql == (
+        "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL, "
+        "ADD COLUMN is_active BOOLEAN DEFAULT TRUE;"
+    )
+
+
+def test_baseline_recommends_medium_fk_sequence_in_order():
+    starting = {"current_schema_ddl": TASKS["medium_rename_fk"].starting_schema_sql}
+    after_drop = {
+        "current_schema_ddl": TASKS["medium_rename_fk"].starting_schema_sql.replace(
+            "CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(id)", ""
+        )
+    }
+    after_rename = {"current_schema_ddl": TASKS["medium_rename_fk"].target_schema_ddl.replace(
+        "CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(user_id)",
+        ""
+    )}
+
+    first = _recommended_step("medium_rename_fk", starting, [])
+    second = _recommended_step("medium_rename_fk", after_drop, [first])
+    third = _recommended_step("medium_rename_fk", after_rename, [first, second])
+
+    assert first == "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;"
+    assert second == "ALTER TABLE users RENAME COLUMN id TO user_id;"
+    assert third == (
+        "ALTER TABLE orders ADD CONSTRAINT fk_orders_users "
+        "FOREIGN KEY (user_id) REFERENCES users(user_id);"
+    )
+
+
+def test_baseline_recommends_hard_safe_sequence():
+    observation = {"current_schema_ddl": TASKS["hard_repartition"].starting_schema_sql}
+    successful_actions = [
+        "CREATE TABLE events_new (LIKE events INCLUDING ALL) PARTITION BY HASH (user_id);",
+        "CREATE TABLE events_new_p0 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 0);",
+        "CREATE TABLE events_new_p1 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 1);",
+    ]
+
+    next_partition = _recommended_step("hard_repartition", observation, successful_actions)
+    next_backfill = _recommended_step(
+        "hard_repartition",
+        observation,
+        successful_actions
+        + [
+            "CREATE TABLE events_new_p2 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 2);",
+            "CREATE TABLE events_new_p3 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 3);",
+            "CREATE TABLE events_new_p4 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 4);",
+            "CREATE TABLE events_new_p5 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 5);",
+            "CREATE TABLE events_new_p6 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 6);",
+            "CREATE TABLE events_new_p7 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 7);",
+        ],
+    )
+
+    assert next_partition == (
+        "CREATE TABLE events_new_p2 PARTITION OF events_new "
+        "FOR VALUES WITH (MODULUS 8, REMAINDER 2);"
+    )
+    assert next_backfill == "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 1 AND 2500;"
+
+
+def test_baseline_select_sql_overrides_unsafe_or_off_sequence_sql():
+    recommended = "DROP TABLE events_old CASCADE;"
+
+    unsafe = _select_sql("hard_repartition", "DROP TABLE events;", recommended)
+    off_sequence = _select_sql(
+        "medium_rename_fk",
+        "ALTER TABLE users RENAME COLUMN id TO user_id;",
+        "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;",
+    )
+
+    assert unsafe == recommended
+    assert off_sequence == "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;"
 
 
 def test_execute_mode_transaction_rolls_back_on_error():
