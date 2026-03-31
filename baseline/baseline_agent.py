@@ -36,8 +36,16 @@ Use conservative database-migration strategy:
 - avoid destructive operations on live data
 - if a table layout must change substantially, prefer create-copy-swap over destructive in-place changes
 - create required structures before moving or renaming live objects
+- when replacing a live table, create the replacement under a temporary name first
+- create any required child tables or partitions on the replacement before copying data
+- copy data before renaming or dropping anything
+- rename/swap only after the replacement structure exists and has been populated
+- cleanup old tables last, and only when they are no longer needed
 - use the target schema, error messages, and recent history to decide the next step
 - do not repeat the same failed SQL statement unchanged
+
+When current and target schemas differ significantly, take the smallest safe step
+toward the target schema rather than attempting the whole migration in one SQL statement.
 
 Return only SQL. No explanation. End with a semicolon.
 """.strip()
