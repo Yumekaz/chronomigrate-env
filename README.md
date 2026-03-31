@@ -58,13 +58,14 @@ The baseline script in `baseline/baseline_agent.py` is intentionally generic:
 it sees the observation, proposes one SQL statement, submits it, and repeats.
 It does not include task-specific logic or hardcoded migration sequences.
 
-After reverting to this generic baseline, the intended score band is:
+Two consecutive live Hugging Face Space `/baseline` runs on 2026-03-31
+returned the same scores:
 
-| Task | Target Score Range |
+| Task | Score |
 |---|---|
-| `easy_add_column` | `0.75 - 1.00` |
-| `medium_rename_fk` | `0.45 - 0.70` |
-| `hard_repartition` | `0.15 - 0.35` |
+| `easy_add_column` | `1.0000` |
+| `medium_rename_fk` | `0.9006` |
+| `hard_repartition` | `0.0000` |
 
 ## Setup
 ```bash
@@ -110,7 +111,7 @@ Verified locally so far:
 - Hugging Face Space is live at `https://tarun431-chronomigrate-env.hf.space`
 - public `openenv validate` passes against the HF Space
 - public `/tasks`, `/reset`, `/state`, `/step`, and `/grader` respond correctly on the HF Space
-- OpenAI `gpt-4o-mini` baseline should be rerun after baseline-agent changes to record fresh measured scores
+- OpenAI `gpt-4o-mini` baseline was rerun after reverting to the generic agent; two consecutive live `/baseline` runs returned `easy=1.0`, `medium=0.9006`, `hard=0.0`
 
 ## Notes
 The runtime includes a SQLite fallback path so the environment can still boot
