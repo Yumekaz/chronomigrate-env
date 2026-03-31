@@ -8,13 +8,16 @@ from typing import Dict, List, Optional
 import requests
 from openai import OpenAI
 
-from server.tasks import TASKS
-
 
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 MODEL = "gpt-4o-mini"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 client = None
+TASK_MAX_STEPS = {
+    "easy_add_column": 8,
+    "medium_rename_fk": 12,
+    "hard_repartition": 20,
+}
 
 SYSTEM_PROMPT = """
 You are a database migration expert. You will be given:
@@ -257,7 +260,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     observation = reset_response.json()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     successful_actions: List[str] = []
-    max_steps = TASKS[task_id].max_steps
+    max_steps = TASK_MAX_STEPS.get(task_id, 15)
 
     for _ in range(max_steps):
         recommended_step = _recommended_step(task_id, observation, successful_actions)
