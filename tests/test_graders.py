@@ -291,6 +291,26 @@ def test_baseline_endpoint_returns_script_scores(monkeypatch):
     }
 
 
+def test_baseline_endpoint_surfaces_script_error(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout='{"error": "OPENAI_API_KEY is required to run the baseline agent."}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("server.app.subprocess.run", fake_run)
+    client = TestClient(app)
+    response = client.post("/baseline")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "error"
+    assert payload["baseline_scores"] == {}
+    assert payload["error"] == "OPENAI_API_KEY is required to run the baseline agent."
+    assert payload["returncode"] == 1
+
+
 def test_execute_mode_transaction_rolls_back_on_error():
     task = TASKS["easy_add_column"]
     db = DBManager()

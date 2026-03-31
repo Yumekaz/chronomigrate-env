@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from typing import Dict, List, Optional
@@ -22,6 +23,7 @@ ENV_DESCRIPTION = (
     "An RL environment that trains AI agents to execute zero-downtime "
     "database schema migrations under simulated transactional load."
 )
+BASELINE_TIMEOUT_SECONDS = int(os.environ.get("BASELINE_TIMEOUT_SECONDS", "600"))
 ENV_TAGS = [
     "openenv",
     "database",
@@ -238,17 +240,64 @@ def run_baseline() -> Dict:
             [sys.executable, "baseline/baseline_agent.py", "--all-tasks"],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=BASELINE_TIMEOUT_SECONDS,
             check=False,
         )
-        lines = [line for line in result.stdout.splitlines() if line.strip()]
-        payload = json.loads(lines[-1]) if result.returncode == 0 and lines else {}
+        payload = _parse_subprocess_json(result.stdout)
+        if result.returncode == 0:
+            return {
+                "baseline_scores": payload if _looks_like_score_payload(payload) else {},
+                "status": "ok",
+            }
+
+        error_message = _extract_baseline_error(result.stdout, result.stderr, payload)
         return {
-            "baseline_scores": payload,
-            "status": "ok" if result.returncode == 0 else "error",
+            "baseline_scores": {},
+            "status": "error",
+            "error": error_message,
+            "returncode": result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "baseline_scores": {},
+            "status": "error",
+            "error": f"baseline timed out after {BASELINE_TIMEOUT_SECONDS} seconds",
         }
     except Exception as exc:
-        return {"baseline_scores": {}, "status": f"error: {exc}"}
+        return {"baseline_scores": {}, "status": "error", "error": str(exc)}
+
+
+def _parse_subprocess_json(stdout: str) -> Dict:
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+    return {}
+
+
+def _looks_like_score_payload(payload: Dict) -> bool:
+    if not payload:
+        return False
+    expected_keys = {"easy_add_column", "medium_rename_fk", "hard_repartition"}
+    return set(payload) == expected_keys and all(
+        isinstance(score, (int, float)) for score in payload.values()
+    )
+
+
+def _extract_baseline_error(stdout: str, stderr: str, payload: Dict) -> str:
+    if isinstance(payload, dict) and payload.get("error"):
+        return str(payload["error"])
+    if stderr.strip():
+        return stderr.strip().splitlines()[-1]
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if lines:
+        return lines[-1]
+    return "baseline subprocess failed without output"
 
 
 def _register_fallback_core_routes(fastapi_app: FastAPI) -> None:
