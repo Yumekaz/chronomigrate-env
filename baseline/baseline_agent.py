@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Dict, List, Optional
 
@@ -11,7 +12,7 @@ from openai import OpenAI
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 MODEL = "gpt-4o-mini"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-MAX_STEPS = 15
+MAX_STEPS = 20
 
 SYSTEM_PROMPT = """
 You are interacting with a database migration environment over repeated turns.
@@ -29,6 +30,14 @@ The environment will execute that SQL and return a new observation.
 
 Goal: move the current schema toward the target schema while avoiding downtime
 and preserving data integrity.
+
+Use conservative database-migration strategy:
+- prefer additive and reversible changes
+- avoid destructive operations on live data
+- if a table layout must change substantially, prefer create-copy-swap over destructive in-place changes
+- create required structures before moving or renaming live objects
+- use the target schema, error messages, and recent history to decide the next step
+- do not repeat the same failed SQL statement unchanged
 
 Return only SQL. No explanation. End with a semicolon.
 """.strip()
@@ -67,6 +76,27 @@ def _select_sql(task_id: str, model_sql: str, recommended_step: Optional[str]) -
     return _normalize_sql(model_sql)
 
 
+def _is_obviously_unsafe_sql(sql: str) -> bool:
+    normalized = re.sub(r"\s+", " ", _normalize_sql(sql).upper())
+    if not normalized:
+        return True
+    if "TRUNCATE" in normalized:
+        return True
+    if "DROP SCHEMA" in normalized:
+        return True
+    if "DROP TABLE" in normalized:
+        return True
+    return False
+
+
+def _repeats_failed_sql(sql: str, history: List[Dict[str, str]]) -> bool:
+    candidate = _normalize_sql(sql)
+    if not candidate or not history:
+        return False
+    last = history[-1]
+    return last.get("result") != "SUCCESS" and candidate == last.get("sql", "")
+
+
 def run_episode(task_id: str, seed: int = 42) -> float:
     reset_response = requests.post(
         f"{BASE_URL}/reset",
@@ -98,6 +128,25 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             max_tokens=200,
         )
         sql = _normalize_sql(completion.choices[0].message.content or "")
+        if _is_obviously_unsafe_sql(sql) or _repeats_failed_sql(sql, history):
+            messages.append({"role": "assistant", "content": sql})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "That SQL is unsafe or repeats a failed step. "
+                        "Propose one safer, non-destructive SQL statement instead. "
+                        "Output only SQL."
+                    ),
+                }
+            )
+            completion = _get_client().chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=200,
+            )
+            sql = _normalize_sql(completion.choices[0].message.content or "")
         messages.append({"role": "assistant", "content": sql})
 
         step_response = requests.post(
