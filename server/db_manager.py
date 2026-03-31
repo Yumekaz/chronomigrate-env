@@ -422,6 +422,10 @@ class DBManager:
         if self.backend == "sqlite":
             self._recreate_sqlite()
         else:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
             cursor = self.conn.cursor()
             cursor.execute("DROP SCHEMA public CASCADE")
             cursor.execute("CREATE SCHEMA public")

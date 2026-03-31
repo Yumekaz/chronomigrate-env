@@ -255,6 +255,12 @@ def compute_data_hash(conn: Any, schema_ddl: str | None = None) -> str:
             cursor.execute(f"SELECT * FROM {table} ORDER BY 1")
             rows = cursor.fetchall()
         except Exception:
+            if not sqlite_backend:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                cursor = conn.cursor()
             hasher.update(table.encode("utf-8"))
             hasher.update(b"__MISSING__")
             continue

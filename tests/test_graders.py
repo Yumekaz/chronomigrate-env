@@ -112,6 +112,39 @@ def test_compute_data_hash_changes_when_rows_change():
     assert first != second
 
 
+def test_compute_data_hash_rolls_back_failed_postgres_reads():
+    class FakeCursor:
+        def __init__(self, conn):
+            self.conn = conn
+            self.last_sql = ""
+
+        def execute(self, sql, params=None):
+            self.last_sql = sql
+            if sql == "SELECT * FROM events ORDER BY 1":
+                raise RuntimeError('relation "events" does not exist')
+
+        def fetchall(self):
+            return []
+
+    class FakeConn:
+        rollback_calls = 0
+
+        def cursor(self):
+            return FakeCursor(self)
+
+        def rollback(self):
+            self.rollback_calls += 1
+
+    fake_conn = FakeConn()
+    fake_conn.__class__.__module__ = "psycopg2.extensions"
+
+    digest = compute_data_hash(fake_conn, "CREATE TABLE events (id BIGSERIAL);")
+
+    assert isinstance(digest, str)
+    assert len(digest) == 64
+    assert fake_conn.rollback_calls == 1
+
+
 def test_env_reset_and_step_updates_episode_state():
     env = ChronoMigrateEnv()
     obs = env.reset({"task_id": "easy_add_column", "seed": 42})
