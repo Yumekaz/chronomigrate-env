@@ -65,7 +65,7 @@ returned the same scores:
 |---|---|
 | `easy_add_column` | `1.0000` |
 | `medium_rename_fk` | `0.9006` |
-| `hard_repartition` | `0.0000` |
+| `hard_repartition` | `0.3373` |
 
 ## Setup
 ```bash
@@ -111,7 +111,7 @@ Verified locally so far:
 - Hugging Face Space is live at `https://tarun431-chronomigrate-env.hf.space`
 - public `openenv validate` passes against the HF Space
 - public `/tasks`, `/reset`, `/state`, `/step`, and `/grader` respond correctly on the HF Space
-- OpenAI `gpt-4o-mini` baseline was rerun after reverting to the generic agent; two consecutive live `/baseline` runs returned `easy=1.0`, `medium=0.9006`, `hard=0.0`
+- OpenAI `gpt-4o-mini` baseline was rerun after restoring a generic DDL-driven safety fallback; two consecutive live `/baseline` runs returned `easy=1.0`, `medium=0.9006`, `hard=0.3373`
 
 ## Notes
 The runtime includes a SQLite fallback path so the environment can still boot
