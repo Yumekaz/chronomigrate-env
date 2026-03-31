@@ -1,12 +1,11 @@
 ---
 title: ChronoMigrate Env
-emoji: 📊
+emoji: ??
 colorFrom: gray
 colorTo: red
 sdk: docker
 pinned: false
 ---
-
 # ChronoMigrate-Env
 **Zero-Downtime Database Migration RL Environment**
 
@@ -56,14 +55,13 @@ The current repository implements:
 ## Baseline Scores (GPT-4o-mini)
 The baseline script is implemented in `baseline/baseline_agent.py` and uses the
 OpenAI API exactly as required by the build bible. The table below reflects the
-target score band from the build bible; the actual paid baseline run is still a
-separate final verification step.
+measured scores from the live Hugging Face Space `/baseline` run on 2026-03-31.
 
 | Task | Score |
 |---|---|
-| `easy_add_column` | `~0.85` |
-| `medium_rename_fk` | `~0.55` |
-| `hard_repartition` | `~0.25` |
+| `easy_add_column` | `1.0000` |
+| `medium_rename_fk` | `0.8700` |
+| `hard_repartition` | `0.1250` |
 
 ## Setup
 ```bash
@@ -109,13 +107,11 @@ Verified locally so far:
 - Hugging Face Space is live at `https://tarun431-chronomigrate-env.hf.space`
 - public `openenv validate` passes against the HF Space
 - public `/tasks`, `/reset`, `/state`, `/step`, and `/grader` respond correctly on the HF Space
-
-Still pending before final submission:
-- configure `OPENAI_API_KEY` for the HF Space if `/baseline` should run there
-- paid OpenAI baseline run and final GPT-4o-mini score capture
+- OpenAI `gpt-4o-mini` baseline is verified on the HF Space via `/baseline` with scores `easy=1.0`, `medium=0.87`, `hard=0.125`
 
 ## Notes
 The runtime includes a SQLite fallback path so the environment can still boot
 when PostgreSQL is unavailable. The FastAPI app is implemented in
 `server/app.py`, and the core environment logic lives in
 `server/chrono_migrate_env.py`.
+
