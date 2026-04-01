@@ -268,6 +268,28 @@ def test_task_mismatch_is_penalized_gracefully():
     assert env.state.step_count == 1
 
 
+def test_unexpected_step_error_is_penalized_gracefully(monkeypatch):
+    env = ChronoMigrateEnv()
+    env.reset({"task_id": "easy_add_column", "seed": 42})
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("synthetic grading failure")
+
+    monkeypatch.setattr("server.chrono_migrate_env.compute_schema_match", explode)
+
+    obs = env.step(
+        MigrationAction(
+            sql="ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;",
+            task_id="easy_add_column",
+        )
+    )
+
+    assert "EXECUTION_ERROR" in obs.last_sql_result
+    assert obs.reward == -0.05
+    assert env.state.step_count == 1
+    assert env.state.done is False
+
+
 def test_grader_rejects_episode_id_mismatch():
     app_env.reset({"task_id": "easy_add_column", "seed": 42})
     result = grade_episode(
