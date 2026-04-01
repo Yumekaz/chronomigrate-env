@@ -25,4 +25,4 @@ RUN chmod +x /home/user/app/scripts/init_db.sh
 
 EXPOSE 7860
 
-CMD ["/home/user/app/scripts/init_db.sh"]
+CMD ["bash", "/home/user/app/scripts/init_db.sh"]

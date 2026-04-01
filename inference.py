@@ -136,6 +136,23 @@ def _partition_modes(ddl: str) -> Dict[str, str]:
     return modes
 
 
+def _extract_all_table_names(ddl: str) -> set[str]:
+    pattern = re.compile(r"CREATE TABLE\s+(\w+)\b", re.IGNORECASE)
+    return {table_name.lower() for table_name in pattern.findall(ddl)}
+
+
+def _extract_successful_created_tables(history: List[Dict[str, str]]) -> set[str]:
+    created_tables: set[str] = set()
+    pattern = re.compile(r"CREATE TABLE\s+(\w+)\b", re.IGNORECASE)
+    for entry in history:
+        if entry.get("result") != "SUCCESS":
+            continue
+        match = pattern.search(_normalize_sql(entry.get("sql", "")))
+        if match:
+            created_tables.add(match.group(1).lower())
+    return created_tables
+
+
 def _rewrite_replacement_statement(
     statement: str, source_table: str, replacement_table: str
 ) -> str:
@@ -192,6 +209,8 @@ def _generic_safe_fallback(
     target_children = _extract_partition_child_statements(target_ddl)
     current_modes = _partition_modes(current_ddl)
     target_modes = _partition_modes(target_ddl)
+    existing_tables = _extract_all_table_names(current_ddl)
+    existing_tables.update(_extract_successful_created_tables(history))
     successful_sql = {
         _normalize_sql(entry.get("sql", ""))
         for entry in history
@@ -211,7 +230,7 @@ def _generic_safe_fallback(
         replacement_table = f"{table_name}_new"
         backup_table = f"{table_name}_old"
 
-        if replacement_table not in current_parents:
+        if replacement_table not in existing_tables:
             return _rewrite_replacement_statement(
                 target_statement, table_name, replacement_table
             )
@@ -226,7 +245,7 @@ def _generic_safe_fallback(
                 r"CREATE TABLE\s+(\w+)\b", replacement_child_sql, re.IGNORECASE
             )
             replacement_child_name = name_match.group(1).lower() if name_match else ""
-            if replacement_child_name and replacement_child_name not in current_parents:
+            if replacement_child_name and replacement_child_name not in existing_tables:
                 return replacement_child_sql
 
         copy_sql = f"INSERT INTO {replacement_table} SELECT * FROM {table_name};"
