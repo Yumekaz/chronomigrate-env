@@ -1,10 +1,13 @@
 """Type-safe client wrapper for ChronoMigrate-Env."""
 
 try:
-    from openenv.core.client import HTTPEnvClient
-    from openenv.core.models import StepResult
+    from openenv.core.client_types import StepResult
+    from openenv.core.env_client import EnvClient
 except Exception:
-    class HTTPEnvClient:
+    class EnvClient:
+        def __class_getitem__(cls, _item):
+            return cls
+
         def __init__(self, *args, **kwargs):
             raise RuntimeError("openenv-core is required to use ChronoMigrateClient.")
 
@@ -18,18 +21,20 @@ except Exception:
 from models import MigrationAction, MigrationObservation, MigrationState
 
 
-class ChronoMigrateClient(HTTPEnvClient):
+class ChronoMigrateClient(
+    EnvClient[MigrationAction, MigrationObservation, MigrationState]
+):
     """Thin adapter that converts raw JSON payloads into typed models."""
 
     def _step_payload(self, action: MigrationAction) -> dict:
         return action.model_dump()
 
     def _parse_result(self, data: dict):
-        observation = data.get("observation", {})
+        observation = data.get("observation", data)
         return StepResult(
             observation=MigrationObservation(**observation),
-            reward=data["reward"],
-            done=data["done"],
+            reward=data.get("reward"),
+            done=data.get("done", False),
             metadata=data.get("metadata", {}),
         )
 

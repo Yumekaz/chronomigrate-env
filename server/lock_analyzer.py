@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+import math
+import re
 
 import sqlglot
 import sqlglot.expressions as exp
@@ -46,9 +48,21 @@ def _analyze_statement(statement: exp.Expression, sql_text: str) -> LockProfile:
     if isinstance(statement, exp.Insert) and statement.args.get("expression") is not None:
         sql_upper = sql_text.upper()
         if "SELECT" in sql_upper:
-            if "BETWEEN" in sql_upper or "LIMIT" in sql_upper or "WHERE" in sql_upper:
-                return LockProfile("ROW_EXCLUSIVE", 5, 0.1, False)
-            return LockProfile("ROW_EXCLUSIVE", 15, 0.6, False)
+            estimated_rows = 1000
+            between_match = re.search(
+                r"BETWEEN\s+(\d+)\s+AND\s+(\d+)",
+                sql_upper,
+            )
+            limit_match = re.search(r"LIMIT\s+(\d+)", sql_upper)
+            if between_match:
+                start, end = between_match.groups()
+                estimated_rows = max(1, int(end) - int(start) + 1)
+            elif limit_match:
+                estimated_rows = max(1, int(limit_match.group(1)))
+
+            lock_ticks = max(1, math.ceil(estimated_rows / 1000) * 15)
+            failure_rate = 0.15 if ("BETWEEN" in sql_upper or "LIMIT" in sql_upper or "WHERE" in sql_upper) else 0.6
+            return LockProfile("ROW_EXCLUSIVE", lock_ticks, failure_rate, False)
         return LockProfile("ROW_EXCLUSIVE", 1, 0.02, False)
 
     if isinstance(statement, exp.Alter):
@@ -56,15 +70,15 @@ def _analyze_statement(statement: exp.Expression, sql_text: str) -> LockProfile:
         if "ALTER COLUMN" in sql_upper and "TYPE" in sql_upper:
             return LockProfile("ACCESS_EXCLUSIVE", 12, 0.9, False)
         if "RENAME COLUMN" in sql_upper:
-            return LockProfile("SHARE_UPDATE_EXCLUSIVE", 3, 0.15, False)
+            return LockProfile("ACCESS_EXCLUSIVE", 3, 0.25, False)
         if "RENAME TO" in sql_upper:
             return LockProfile("ACCESS_EXCLUSIVE", 1, 0.05, False)
         if "DROP COLUMN" in sql_upper:
             return LockProfile("ACCESS_EXCLUSIVE", 5, 0.4, False)
         if "DROP CONSTRAINT" in sql_upper:
-            return LockProfile("ACCESS_EXCLUSIVE", 5, 0.25, False)
+            return LockProfile("ACCESS_EXCLUSIVE", 2, 0.2, False)
         if "ADD CONSTRAINT" in sql_upper and "FOREIGN KEY" in sql_upper:
-            return LockProfile("ACCESS_EXCLUSIVE", 5, 0.25, False)
+            return LockProfile("SHARE_ROW_EXCLUSIVE", 4, 0.3, False)
         if "ADD COLUMN" in sql_upper:
             if "DEFAULT" in sql_upper:
                 return LockProfile("SHARE_UPDATE_EXCLUSIVE", 0, 0.0, False)

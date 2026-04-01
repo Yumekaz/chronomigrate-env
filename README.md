@@ -10,32 +10,27 @@ pinned: false
 # ChronoMigrate-Env
 **Zero-Downtime Database Migration RL Environment**
 
-An OpenEnv-style environment for training agents to execute schema migrations
-without breaking availability or data integrity.
-
 ## Environment Description
-ChronoMigrate-Env simulates a live database migration workflow. An agent
-receives the current schema, the target schema, and feedback about lock
-impact, schema progress, and data safety, then issues SQL to move the
-database toward the target state.
+ChronoMigrate-Env is an OpenEnv-compatible reinforcement learning environment for zero-downtime database schema migration. Agents are graded on three things at once:
 
-The current repository implements:
-- `POST /reset`, `POST /step`, and `GET /state`
-- `GET /tasks`, `POST /grader`, and `POST /baseline`
-- A deterministic DES-style lock simulator
-- PostgreSQL-first execution with SQLite fallback
-- Three migration tasks with seeded data and task-specific graders
+- schema correctness
+- operational availability during the migration
+- data integrity after the migration
+
+The runtime simulates transactional load with a deterministic discrete-event model, analyzes SQL lock impact with `sqlglot`, and supports PostgreSQL-first execution with SQLite fallback.
 
 ## Action Space
 | Field | Type | Description |
 |---|---|---|
-| `sql` | string | Raw SQL statement to execute |
+| `sql` | string | Raw SQL statement to execute against the database |
 | `task_id` | string | Task being solved |
 | `execute_mode` | string | `transaction` or `autocommit` |
 
 ## Observation Space
 | Field | Type | Description |
 |---|---|---|
+| `done` | bool | Whether the episode has ended |
+| `reward` | float | Reward for the most recent step |
 | `current_schema_ddl` | string | Current schema as DDL |
 | `target_schema_ddl` | string | Target schema |
 | `last_sql_result` | string | `SUCCESS` or backend error |
@@ -47,33 +42,32 @@ The current repository implements:
 | `episode_id` | string | Unique episode id |
 
 ## Tasks
-| Task | Difficulty | Description |
-|---|---|---|
-| `easy_add_column` | Easy | Add two columns with DEFAULT values |
-| `medium_rename_fk` | Medium | Rename a primary-key column and repair foreign keys |
-| `hard_repartition` | Hard | Repartition a table under load |
+| Task | Difficulty | Max Steps | Description |
+|---|---|---|---|
+| `easy_add_column` | Easy | 5 | Add 2 columns with DEFAULT values |
+| `medium_rename_fk` | Medium | 10 | Rename a primary key column and update FK references |
+| `hard_repartition` | Hard | 20 | Repartition a large table under simulated load |
 
-## Baseline Scores (GPT-4o-mini)
-The baseline script in `baseline/baseline_agent.py` is intentionally generic:
-it sees the observation, proposes one SQL statement, submits it, and repeats.
-It does not include task-specific logic or hardcoded migration sequences.
+## Baseline Scores (gpt-4o-mini)
+The required baseline entrypoint is the root-level `inference.py` script. It uses a generic DDL-driven fallback strategy for safer migration planning and expects one of `HF_TOKEN`, `API_KEY`, or `OPENAI_API_KEY` to be configured.
 
-Two consecutive live Hugging Face Space `/baseline` runs on 2026-03-31
-returned the same scores:
+Expected target scores after redeploy:
 
 | Task | Score |
 |---|---|
-| `easy_add_column` | `1.0000` |
-| `medium_rename_fk` | `0.9006` |
-| `hard_repartition` | `0.3373` |
+| `easy_add_column` | `~0.85+` |
+| `medium_rename_fk` | `~0.55+` |
+| `hard_repartition` | `~0.25+` |
 
 ## Setup
 ```bash
-git clone https://huggingface.co/spaces/Tarun431/chronomigrate-env
-cd chronomigrate-env
+python -m venv .venv
+pip install -r requirements.txt
 docker build -t chronomigrate-env .
-docker run -p 7860:7860 -e OPENAI_API_KEY=your_key chronomigrate-env
+docker run --rm -p 7860:7860 chronomigrate-env
 ```
+
+Set one of `HF_TOKEN`, `API_KEY`, or `OPENAI_API_KEY` before running the baseline script. `MODEL_NAME` defaults to `gpt-4o-mini`.
 
 ## Usage
 ```python
@@ -86,35 +80,27 @@ async with ChronoMigrateClient(base_url="http://localhost:7860") as env:
         MigrationAction(
             sql="ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;",
             task_id="easy_add_column",
+            execute_mode="transaction",
         )
     )
 ```
 
-## Verification
-Recommended local checks:
+Run the baseline script:
 ```bash
-python -m pytest -q
-docker build -t chronomigrate-env .
-docker run --rm -p 7860:7860 chronomigrate-env
-openenv validate --url http://127.0.0.1:7860
-python baseline/baseline_agent.py --all-tasks
+python inference.py --all-tasks
 ```
 
-If the environment is running locally, verify the main contract endpoints:
-`/tasks`, `/reset`, `/step`, `/state`, `/grader`, and `/baseline`.
+## How Judging Works
+Per-step reward is multiplicative:
 
-Verified locally so far:
-- Docker image builds successfully
-- Dockerized runtime boots successfully on PostgreSQL
-- `openenv validate` passes against the running container
-- local Qwen verification on PostgreSQL reaches `easy=1.0`, `medium=0.6731`, `hard=0.244`
-- Hugging Face Space is live at `https://tarun431-chronomigrate-env.hf.space`
-- public `openenv validate` passes against the HF Space
-- public `/tasks`, `/reset`, `/state`, `/step`, and `/grader` respond correctly on the HF Space
-- OpenAI `gpt-4o-mini` baseline was rerun after restoring a generic DDL-driven safety fallback; two consecutive live `/baseline` runs returned `easy=1.0`, `medium=0.9006`, `hard=0.3373`
+```text
+R_step = schema_match_delta * (1 - downtime_pct) * data_integrity
+```
 
-## Notes
-The runtime includes a SQLite fallback path so the environment can still boot
-when PostgreSQL is unavailable. The FastAPI app is implemented in
-`server/app.py`, and the core environment logic lives in
-`server/chrono_migrate_env.py`.
+Final grading uses the current episode state:
+
+```text
+score = schema_match * availability * data_integrity
+```
+
+This design prevents reward hacking. An agent that drops data or causes full downtime gets multiplied toward zero even if the target schema appears to match.

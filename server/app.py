@@ -23,7 +23,7 @@ ENV_DESCRIPTION = (
     "An RL environment that trains AI agents to execute zero-downtime "
     "database schema migrations under simulated transactional load."
 )
-BASELINE_TIMEOUT_SECONDS = int(os.environ.get("BASELINE_TIMEOUT_SECONDS", "600"))
+BASELINE_TIMEOUT_SECONDS = int(os.environ.get("BASELINE_TIMEOUT_SECONDS", "180"))
 ENV_TAGS = [
     "openenv",
     "database",
@@ -133,8 +133,8 @@ def reset(config: Optional[dict] = None):
 def step(action: MigrationAction):
     try:
         observation = env.step(action)
-        current_state = env.state()
-    except ValueError as exc:
+        current_state = env.state
+    except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "observation": observation.model_dump(),
@@ -146,7 +146,7 @@ def step(action: MigrationAction):
 
 def state():
     try:
-        return env.state()
+        return env.state
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -170,7 +170,7 @@ def list_tasks() -> List[Dict]:
 
 def grade_episode(req: GraderRequest) -> Dict:
     try:
-        current_state = env.state()
+        current_state = env.state
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -187,26 +187,9 @@ def grade_episode(req: GraderRequest) -> Dict:
         if current_state.current_data_hash == current_state.data_integrity_hash
         else 0.0
     )
-    task = TASKS[req.task_id]
-    score = task.grade_fn(
-        current_state.current_schema_ddl,
-        current_state.target_schema_ddl,
-        current_state.data_integrity_hash,
-        current_state.current_data_hash,
-        availability,
-        action_history=env.action_history,
-        steps_used=current_state.step_count,
-    )
-    episode_reward = env.compute_terminal_reward(
-        final_schema_match=current_state.schema_match_pct,
-        final_availability=availability,
-        data_integrity=data_integrity,
-        steps_used=current_state.step_count,
-        max_steps=current_state.max_steps,
-    )
+    score = current_state.schema_match_pct * availability * data_integrity
     return {
         "score": round(score, 4),
-        "episode_reward": round(episode_reward, 4),
         "schema_match": round(current_state.schema_match_pct, 4),
         "availability": round(availability, 4),
         "data_integrity": data_integrity,
@@ -237,10 +220,11 @@ def _generate_feedback(
 def run_baseline() -> Dict:
     try:
         result = subprocess.run(
-            [sys.executable, "baseline/baseline_agent.py", "--all-tasks"],
+            [sys.executable, "inference.py", "--all-tasks"],
             capture_output=True,
             text=True,
             timeout=BASELINE_TIMEOUT_SECONDS,
+            env={**os.environ},
             check=False,
         )
         payload = _parse_subprocess_json(result.stdout)
@@ -347,4 +331,14 @@ def create_app() -> FastAPI:
     return create_fastapi_app()
 
 
+def main() -> None:
+    import uvicorn
+
+    uvicorn.run("server.app:app", host="0.0.0.0", port=7860)
+
+
 app = create_fastapi_app()
+
+
+if __name__ == "__main__":
+    main()

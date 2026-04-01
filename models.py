@@ -2,8 +2,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+try:
+    from openenv.core.env_server.types import Action, Observation
+except Exception:
+    class Action(BaseModel):
+        pass
 
-class MigrationAction(BaseModel):
+    class Observation(BaseModel):
+        done: bool = False
+        reward: float = 0.0
+
+
+class MigrationAction(Action):
     sql: str = Field(
         ...,
         description="Raw SQL statement to execute against the database.",
@@ -20,7 +30,7 @@ class MigrationAction(BaseModel):
     )
 
 
-class MigrationObservation(BaseModel):
+class MigrationObservation(Observation):
     current_schema_ddl: str = Field(
         description="Full DDL of the current database schema as a string."
     )
@@ -42,7 +52,7 @@ class MigrationObservation(BaseModel):
     episode_id: str = Field(description="Unique episode identifier for reproducibility.")
 
 
-class MigrationState(BaseModel):
+class MigrationState(Observation):
     episode_id: str
     task_id: str
     step_count: int
@@ -59,7 +69,6 @@ class MigrationState(BaseModel):
     )
     schema_match_pct: float
     cumulative_reward: float
-    done: bool
     db_backend: Literal["postgresql", "sqlite"] = Field(
         description="Which backend is active."
     )

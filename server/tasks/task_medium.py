@@ -95,8 +95,7 @@ def grade_medium(
 
     schema_match = compute_schema_match(current_schema_ddl, target_schema_ddl)
     data_integrity = 1.0 if data_hash_before == data_hash_after else 0.0
-    partial_bonus = 0.1 if schema_match >= 0.7 else 0.0
-    return min(1.0, schema_match * data_integrity * availability_pct + partial_bonus)
+    return min(1.0, schema_match * data_integrity * availability_pct)
 
 
 TASK = TaskDefinition(
@@ -104,7 +103,7 @@ TASK = TaskDefinition(
     description="Rename a primary-key column and repair foreign key references safely.",
     difficulty="medium",
     load_level=300,
-    max_steps=12,
+    max_steps=10,
     starting_schema_sql=STARTING_SCHEMA.strip(),
     target_schema_ddl=TARGET_SCHEMA.strip(),
     seed_data_sql=SEED_DATA.strip(),

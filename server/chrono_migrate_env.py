@@ -2,7 +2,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 try:
-    from openenv.core.env_server import Environment
+    from openenv.core.env_server.interfaces import Environment
 except Exception:
     class Environment:
         pass
@@ -23,7 +23,6 @@ class ChronoMigrateEnv(Environment):
         self.current_task = None
         self.action_history = []
         self.last_step_reward = 0.0
-        self.last_terminal_reward = 0.0
         self.last_step_downtime_pct = 0.0
         self.last_metadata: Dict[str, Any] = {}
 
@@ -56,14 +55,14 @@ class ChronoMigrateEnv(Environment):
             ),
             cumulative_reward=0.0,
             done=False,
+            reward=0.0,
             db_backend=self.db.backend,
         )
         self.action_history = []
         self.last_step_reward = 0.0
-        self.last_terminal_reward = 0.0
         self.last_step_downtime_pct = 0.0
         self.last_metadata = {"event": "reset"}
-        return self._build_observation("RESET")
+        return self._build_observation("RESET", 0.0)
 
     def step(self, action: MigrationAction) -> MigrationObservation:
         if self._state is None:
@@ -71,10 +70,10 @@ class ChronoMigrateEnv(Environment):
 
         if self._state.done:
             self.last_step_reward = 0.0
-            self.last_terminal_reward = 0.0
             self.last_step_downtime_pct = 0.0
             self.last_metadata = {"event": "episode_done"}
-            return self._build_observation("EPISODE_DONE")
+            self._state.reward = 0.0
+            return self._build_observation("EPISODE_DONE", 0.0)
 
         if action.task_id != self._state.task_id:
             return self._handle_invalid_action(
@@ -111,55 +110,28 @@ class ChronoMigrateEnv(Environment):
         self._state.failed_background_queries += des_result.queries_failed
         self._state.cumulative_reward += step_reward
         self._state.done = (
-            self._state.step_count >= self._state.max_steps or new_schema_match >= 0.999
+            self._state.step_count >= self._state.max_steps or new_schema_match >= 1.0
         )
-
-        terminal_reward = 0.0
         availability = self._compute_availability(
             self._state.total_background_queries, self._state.failed_background_queries
         )
-        if self._state.done:
-            terminal_reward = self.compute_terminal_reward(
-                final_schema_match=new_schema_match,
-                final_availability=availability,
-                data_integrity=data_integrity,
-                steps_used=self._state.step_count,
-                max_steps=self._state.max_steps,
-            )
-            self._state.cumulative_reward += terminal_reward
-
-        self.last_terminal_reward = terminal_reward
-        self.last_step_reward = step_reward + terminal_reward
+        self._state.reward = step_reward
+        self.last_step_reward = step_reward
         self.last_metadata = {
             "lock_type": lock_profile.lock_type,
             "lock_ticks": lock_profile.lock_ticks,
             "availability": round(availability, 4),
             "data_integrity": data_integrity,
             "execute_mode": action.execute_mode,
-            "terminal_reward": round(terminal_reward, 4),
             "actions_recorded": len(self.action_history),
         }
-        return self._build_observation("SUCCESS" if success else result)
+        return self._build_observation("SUCCESS" if success else result, step_reward)
 
+    @property
     def state(self) -> MigrationState:
         if self._state is None:
             raise RuntimeError("Episode not initialized. Call reset() first.")
         return self._state
-
-    def compute_terminal_reward(
-        self,
-        final_schema_match: float,
-        final_availability: float,
-        data_integrity: float,
-        steps_used: int,
-        max_steps: int,
-    ) -> float:
-        if data_integrity == 0.0:
-            return 0.0
-        if final_schema_match >= 1.0:
-            efficiency_bonus = 0.2 * (1 - steps_used / max_steps)
-            return min(1.0, final_schema_match * final_availability + efficiency_bonus)
-        return final_schema_match * final_availability * data_integrity
 
     def _compute_availability(self, total_queries: int, failed_queries: int) -> float:
         return 1.0 - (failed_queries / total_queries) if total_queries else 1.0
@@ -167,20 +139,19 @@ class ChronoMigrateEnv(Environment):
     def _handle_invalid_action(self, message: str) -> MigrationObservation:
         self._state.step_count += 1
         self._state.cumulative_reward -= 0.05
+        self._state.reward = -0.05
         self._state.done = self._state.step_count >= self._state.max_steps
         self.last_step_reward = -0.05
-        self.last_terminal_reward = 0.0
         self.last_step_downtime_pct = 0.0
         self.action_history.append(f"INVALID::{message}")
         self.last_metadata = {
             "error": message,
-            "terminal_reward": 0.0,
             "actions_recorded": len(self.action_history),
         }
-        return self._build_observation(message)
+        return self._build_observation(message, -0.05)
 
-    def _build_observation(self, last_result: str) -> MigrationObservation:
-        state = self.state()
+    def _build_observation(self, last_result: str, reward: float) -> MigrationObservation:
+        state = self.state
         total = state.total_background_queries
         failed = state.failed_background_queries
         return MigrationObservation(
@@ -193,4 +164,6 @@ class ChronoMigrateEnv(Environment):
             task_id=state.task_id,
             schema_match_pct=state.schema_match_pct,
             episode_id=state.episode_id,
+            done=state.done,
+            reward=reward,
         )

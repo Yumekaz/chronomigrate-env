@@ -22,24 +22,40 @@ def test_create_index_concurrently_is_safe():
 
 def test_rename_column_matches_docx_lock_profile():
     profile = analyze_lock("ALTER TABLE users RENAME COLUMN id TO user_id;")
-    assert profile.lock_type == "SHARE_UPDATE_EXCLUSIVE"
+    assert profile.lock_type == "ACCESS_EXCLUSIVE"
     assert profile.lock_ticks == 3
-    assert profile.failure_rate == 0.15
+    assert profile.failure_rate == 0.25
 
 
 def test_add_foreign_key_is_more_expensive_than_simple_add_column():
     profile = analyze_lock(
         "ALTER TABLE orders ADD CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(id);"
     )
+    assert profile.lock_type == "SHARE_ROW_EXCLUSIVE"
+    assert profile.lock_ticks == 4
+    assert profile.failure_rate == 0.3
+
+
+def test_drop_constraint_matches_docx_lock_profile():
+    profile = analyze_lock("ALTER TABLE orders DROP CONSTRAINT fk_orders_users;")
     assert profile.lock_type == "ACCESS_EXCLUSIVE"
-    assert profile.lock_ticks == 5
-    assert profile.failure_rate == 0.25
+    assert profile.lock_ticks == 2
+    assert profile.failure_rate == 0.2
 
 
 def test_drop_old_table_cleanup_is_not_treated_as_data_loss():
     profile = analyze_lock("DROP TABLE events_old CASCADE;")
     assert profile.destroys_data is False
     assert profile.lock_ticks == 5
+
+
+def test_batched_insert_select_scales_lock_ticks_with_batch_size():
+    profile = analyze_lock(
+        "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 1 AND 2500;"
+    )
+    assert profile.lock_type == "ROW_EXCLUSIVE"
+    assert profile.lock_ticks == 45
+    assert profile.failure_rate == 0.15
 
 
 def test_invalid_sql_returns_no_lock():

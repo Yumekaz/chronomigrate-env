@@ -1,9 +1,9 @@
-FROM python:3.11-slim-bookworm
+FROM ghcr.io/meta-pytorch/openenv-base:latest
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
-    postgresql-15 \
-    postgresql-client-15 \
+    postgresql-17 \
+    postgresql-client-17 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 1000 user

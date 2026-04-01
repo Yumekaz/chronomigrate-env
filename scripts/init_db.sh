@@ -3,7 +3,7 @@ set -euo pipefail
 
 export PGDATA=/home/user/pgdata
 export PGPORT=5433
-export PATH=/usr/lib/postgresql/15/bin:$PATH
+export PATH=/usr/lib/postgresql/17/bin:$PATH
 
 echo "Attempting PostgreSQL user-space initialization..."
 

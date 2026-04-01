@@ -1,0 +1,8 @@
+.venv/
+.uvproject/
+.pytest_cache/
+__pycache__/
+*.pyc
+uvicorn.err.log
+uvicorn.out.log
+ChronoMigrate_Build_Bible_V2_FINAL.docx

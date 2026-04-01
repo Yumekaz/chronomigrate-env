@@ -4,11 +4,10 @@ from models import MigrationAction, MigrationObservation, MigrationState
 def test_action_model_defaults():
     action = MigrationAction(sql="SELECT 1;", task_id="easy_add_column")
     assert action.execute_mode == "transaction"
-    assert action.model_dump() == {
-        "sql": "SELECT 1;",
-        "task_id": "easy_add_column",
-        "execute_mode": "transaction",
-    }
+    payload = action.model_dump()
+    assert payload["sql"] == "SELECT 1;"
+    assert payload["task_id"] == "easy_add_column"
+    assert payload["execute_mode"] == "transaction"
 
 
 def test_action_model_accepts_autocommit():
@@ -28,6 +27,8 @@ def test_action_schema_exposes_required_fields():
 
 def test_observation_model_roundtrip():
     observation = MigrationObservation(
+        done=False,
+        reward=0.25,
         current_schema_ddl="CREATE TABLE users(id INTEGER);",
         target_schema_ddl="CREATE TABLE users(id INTEGER, email TEXT);",
         last_sql_result="SUCCESS",
@@ -40,11 +41,15 @@ def test_observation_model_roundtrip():
     )
     assert observation.task_id == "easy_add_column"
     assert observation.model_dump()["episode_id"] == "episode-1"
+    assert observation.done is False
+    assert observation.reward == 0.25
 
 
 def test_observation_schema_contains_runtime_fields():
     schema = MigrationObservation.model_json_schema()
     for field in [
+        "done",
+        "reward",
         "current_schema_ddl",
         "target_schema_ddl",
         "last_sql_result",
@@ -60,10 +65,12 @@ def test_observation_schema_contains_runtime_fields():
 
 def test_state_model_backend_literal():
     state = MigrationState(
+        done=False,
+        reward=0.0,
         episode_id="episode-1",
         task_id="easy_add_column",
         step_count=0,
-        max_steps=8,
+        max_steps=5,
         current_schema_ddl="",
         target_schema_ddl="",
         total_background_queries=0,
@@ -72,8 +79,8 @@ def test_state_model_backend_literal():
         current_data_hash="a",
         schema_match_pct=0.0,
         cumulative_reward=0.0,
-        done=False,
         db_backend="sqlite",
     )
     assert state.db_backend == "sqlite"
     assert state.model_dump()["done"] is False
+    assert state.model_dump()["reward"] == 0.0

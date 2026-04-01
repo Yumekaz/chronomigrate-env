@@ -10,8 +10,13 @@ from openai import OpenAI
 
 
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
-MODEL = "gpt-4o-mini"
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+API_KEY = (
+    os.getenv("HF_TOKEN")
+    or os.getenv("API_KEY")
+    or os.getenv("OPENAI_API_KEY", "")
+)
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 MAX_STEPS = 20
 
 SYSTEM_PROMPT = """
@@ -50,16 +55,11 @@ toward the target schema rather than attempting the whole migration in one SQL s
 Return only SQL. No explanation. End with a semicolon.
 """.strip()
 
-client = None
-
 
 def _get_client() -> OpenAI:
-    global client
-    if client is None:
-        if not OPENAI_API_KEY:
-            raise RuntimeError("OPENAI_API_KEY is required to run the baseline agent.")
-        client = OpenAI(api_key=OPENAI_API_KEY)
-    return client
+    if not API_KEY:
+        raise RuntimeError("HF_TOKEN, API_KEY, or OPENAI_API_KEY is required.")
+    return OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 
 def _normalize_sql(sql: str) -> str:
@@ -72,16 +72,6 @@ def _normalize_sql(sql: str) -> str:
     if cleaned and not cleaned.endswith(";"):
         cleaned += ";"
     return cleaned
-
-
-def _recommended_step(
-    task_id: str, observation: Dict[str, object], successful_actions: List[str]
-) -> Optional[str]:
-    return None
-
-
-def _select_sql(task_id: str, model_sql: str, recommended_step: Optional[str]) -> str:
-    return _normalize_sql(model_sql)
 
 
 def _is_obviously_unsafe_sql(sql: str) -> bool:
@@ -146,7 +136,9 @@ def _partition_modes(ddl: str) -> Dict[str, str]:
     return modes
 
 
-def _rewrite_replacement_statement(statement: str, source_table: str, replacement_table: str) -> str:
+def _rewrite_replacement_statement(
+    statement: str, source_table: str, replacement_table: str
+) -> str:
     rewritten = re.sub(
         rf"\bCREATE TABLE\s+{re.escape(source_table)}\b",
         f"CREATE TABLE {replacement_table}",
@@ -186,10 +178,13 @@ def _is_stalled(history: List[Dict[str, str]]) -> bool:
     if len(history) < 2:
         return False
     recent = history[-2:]
-    return all(round(float(item.get("schema_match", 0.0)), 4) == round(float(recent[0].get("schema_match", 0.0)), 4) for item in recent)
+    first_score = round(float(recent[0].get("schema_match", 0.0)), 4)
+    return all(round(float(item.get("schema_match", 0.0)), 4) == first_score for item in recent)
 
 
-def _generic_safe_fallback(observation: Dict[str, object], history: List[Dict[str, str]]) -> Optional[str]:
+def _generic_safe_fallback(
+    observation: Dict[str, object], history: List[Dict[str, str]]
+) -> Optional[str]:
     current_ddl = str(observation.get("current_schema_ddl", ""))
     target_ddl = str(observation.get("target_schema_ddl", ""))
     current_parents = _extract_parent_table_statements(current_ddl)
@@ -217,7 +212,9 @@ def _generic_safe_fallback(observation: Dict[str, object], history: List[Dict[st
         backup_table = f"{table_name}_old"
 
         if replacement_table not in current_parents:
-            return _rewrite_replacement_statement(target_statement, table_name, replacement_table)
+            return _rewrite_replacement_statement(
+                target_statement, table_name, replacement_table
+            )
 
         for child in target_children:
             if child["parent"] != table_name:
@@ -225,14 +222,10 @@ def _generic_safe_fallback(observation: Dict[str, object], history: List[Dict[st
             replacement_child_sql = _rewrite_partition_child_statement(
                 child["statement"], table_name, replacement_table, child["child"]
             )
-            replacement_child_name_match = re.search(
+            name_match = re.search(
                 r"CREATE TABLE\s+(\w+)\b", replacement_child_sql, re.IGNORECASE
             )
-            replacement_child_name = (
-                replacement_child_name_match.group(1).lower()
-                if replacement_child_name_match
-                else ""
-            )
+            replacement_child_name = name_match.group(1).lower() if name_match else ""
             if replacement_child_name and replacement_child_name not in current_parents:
                 return replacement_child_sql
 
@@ -261,6 +254,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     observation = reset_response.json()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     history: List[Dict[str, str]] = []
+    client = _get_client()
 
     for _ in range(MAX_STEPS):
         fallback_sql = _generic_safe_fallback(observation, history)
@@ -276,20 +270,18 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             "Write the next SQL statement."
         )
         messages.append({"role": "user", "content": prompt})
-        completion = _get_client().chat.completions.create(
-            model=MODEL,
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
             messages=messages,
             temperature=0.0,
             max_tokens=200,
         )
         sql = _normalize_sql(completion.choices[0].message.content or "")
+
         if fallback_sql and (
             _is_obviously_unsafe_sql(sql)
             or _repeats_failed_sql(sql, history)
-            or (
-                _is_stalled(history)
-                and float(observation.get("schema_match_pct", 0.0)) < 0.95
-            )
+            or (_is_stalled(history) and float(observation.get("schema_match_pct", 0.0)) < 0.95)
         ):
             sql = fallback_sql
         elif _is_obviously_unsafe_sql(sql) or _repeats_failed_sql(sql, history):
@@ -304,13 +296,14 @@ def run_episode(task_id: str, seed: int = 42) -> float:
                     ),
                 }
             )
-            completion = _get_client().chat.completions.create(
-                model=MODEL,
+            completion = client.chat.completions.create(
+                model=MODEL_NAME,
                 messages=messages,
                 temperature=0.0,
                 max_tokens=200,
             )
             sql = _normalize_sql(completion.choices[0].message.content or "")
+
         messages.append({"role": "assistant", "content": sql})
 
         step_response = requests.post(
@@ -328,10 +321,12 @@ def run_episode(task_id: str, seed: int = 42) -> float:
                 "schema_match": str(observation.get("schema_match_pct", 0.0)),
             }
         )
-        if payload.get("done"):
+        if payload.get("done", False):
             break
 
-    grader_response = requests.post(f"{BASE_URL}/grader", json={"task_id": task_id}, timeout=30)
+    grader_response = requests.post(
+        f"{BASE_URL}/grader", json={"task_id": task_id}, timeout=30
+    )
     grader_response.raise_for_status()
     return float(grader_response.json().get("score", 0.0))
 
@@ -345,12 +340,12 @@ def main() -> None:
     if args.all_tasks:
         results: Dict[str, float] = {}
         for task_id in ["easy_add_column", "medium_rename_fk", "hard_repartition"]:
-            score = run_episode(task_id)
+            score = run_episode(task_id, seed=42)
             results[task_id] = score
             print(f"{task_id}: {score:.4f}", flush=True)
         print(json.dumps(results))
     else:
-        print(json.dumps({args.task: run_episode(args.task)}))
+        print(json.dumps({args.task: run_episode(args.task, seed=42)}))
 
 
 if __name__ == "__main__":

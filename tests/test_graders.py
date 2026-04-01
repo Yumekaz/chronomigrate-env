@@ -162,7 +162,9 @@ def test_env_reset_and_step_updates_episode_state():
     assert step.step_count == 1
     assert "email" in step.current_schema_ddl.lower()
     assert 0.0 <= step.schema_match_pct <= 1.0
-    assert env.state().cumulative_reward >= 0.0
+    assert step.reward >= 0.0
+    assert step.done is False
+    assert env.state.cumulative_reward >= 0.0
 
 
 def test_tasks_endpoint_lists_expected_tasks():
@@ -262,7 +264,8 @@ def test_task_mismatch_is_penalized_gracefully():
     )
     assert "TASK_ID_MISMATCH" in obs.last_sql_result
     assert env.last_step_reward == -0.05
-    assert env.state().step_count == 1
+    assert obs.reward == -0.05
+    assert env.state.step_count == 1
 
 
 def test_grader_rejects_episode_id_mismatch():
@@ -329,7 +332,7 @@ def test_baseline_endpoint_surfaces_script_error(monkeypatch):
     def fake_run(*args, **kwargs):
         return SimpleNamespace(
             returncode=1,
-            stdout='{"error": "OPENAI_API_KEY is required to run the baseline agent."}',
+            stdout='{"error": "HF_TOKEN, API_KEY, or OPENAI_API_KEY is required."}',
             stderr="",
         )
 
@@ -341,7 +344,7 @@ def test_baseline_endpoint_surfaces_script_error(monkeypatch):
     payload = response.json()
     assert payload["status"] == "error"
     assert payload["baseline_scores"] == {}
-    assert payload["error"] == "OPENAI_API_KEY is required to run the baseline agent."
+    assert payload["error"] == "HF_TOKEN, API_KEY, or OPENAI_API_KEY is required."
     assert payload["returncode"] == 1
 
 
@@ -606,44 +609,25 @@ def test_postgresql_smoke_skips_cleanly_when_unavailable():
         pytest.skip(f"PostgreSQL smoke unavailable: {exc}")
 
 
-def test_hard_grader_rewards_safe_pattern_history():
+def test_hard_grader_is_multiplicative_and_bounded():
     task = TASKS["hard_repartition"]
-    base = task.grade_fn(
+    high_availability = task.grade_fn(
         task.target_schema_ddl,
         task.target_schema_ddl,
         "same",
         "same",
         0.95,
-        action_history=[],
-        steps_used=4,
     )
-    safe = task.grade_fn(
+    low_availability = task.grade_fn(
         task.target_schema_ddl,
         task.target_schema_ddl,
         "same",
         "same",
-        0.95,
-        action_history=[
-            "CREATE TABLE events_new (LIKE events INCLUDING ALL) PARTITION BY HASH (user_id);",
-            "CREATE TABLE events_new_p0 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 0);",
-            "CREATE TABLE events_new_p1 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 1);",
-            "CREATE TABLE events_new_p2 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 2);",
-            "CREATE TABLE events_new_p3 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 3);",
-            "CREATE TABLE events_new_p4 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 4);",
-            "CREATE TABLE events_new_p5 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 5);",
-            "CREATE TABLE events_new_p6 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 6);",
-            "CREATE TABLE events_new_p7 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 7);",
-            "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 1 AND 2500;",
-            "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 2501 AND 5000;",
-            "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 5001 AND 7500;",
-            "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 7501 AND 10000;",
-            "ALTER TABLE events RENAME TO events_old;",
-            "ALTER TABLE events_new RENAME TO events;",
-            "DROP TABLE events_old CASCADE;",
-        ],
-        steps_used=12,
+        0.5,
     )
-    assert safe > base
+    assert 0.0 <= high_availability <= 1.0
+    assert 0.0 <= low_availability <= 1.0
+    assert high_availability > low_availability
 
 
 def test_sqlite_hard_safe_pattern_supports_like_and_partition_children():
@@ -707,7 +691,6 @@ def test_drop_table_scores_zero_due_to_data_integrity_loss():
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
 
     assert result["score"] == 0.0
-    assert result["episode_reward"] == 0.0
 
 
 def test_hard_grader_preserves_multiplicative_zero_on_data_loss():
@@ -744,7 +727,7 @@ def test_ten_sequential_easy_episodes_are_stable():
                 task_id="easy_add_column",
             )
         )
-        state = env.state()
+        state = env.state
         availability = 1.0 - (
             state.failed_background_queries / state.total_background_queries
             if state.total_background_queries
