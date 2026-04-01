@@ -11,6 +11,7 @@ from inference import (
     _recommended_step,
     _repeats_failed_sql,
     _select_sql,
+    run_episode,
 )
 from models import MigrationAction
 from server.app import (
@@ -374,6 +375,84 @@ def test_baseline_endpoint_surfaces_script_error(monkeypatch):
     assert payload["baseline_scores"] == {}
     assert payload["error"] == "HF_TOKEN, API_KEY, or OPENAI_API_KEY is required."
     assert payload["returncode"] == 1
+
+
+def test_run_episode_passes_seed_to_model_requests(monkeypatch):
+    create_calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            create_calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="ALTER TABLE noop DO NOTHING;")
+                    )
+                ]
+            )
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    def fake_post(url, json=None, timeout=30):
+        if url.endswith("/reset"):
+            return FakeResponse(
+                {
+                    "current_schema_ddl": TASKS["medium_rename_fk"].target_schema_ddl,
+                    "target_schema_ddl": TASKS["medium_rename_fk"].target_schema_ddl,
+                    "last_sql_result": "RESET",
+                    "downtime_pct": 0.0,
+                    "step_count": 0,
+                    "cumulative_downtime_pct": 0.0,
+                    "task_id": "medium_rename_fk",
+                    "schema_match_pct": 1.0,
+                    "episode_id": "episode-1",
+                }
+            )
+        if url.endswith("/step"):
+            return FakeResponse(
+                {
+                    "observation": {
+                        "current_schema_ddl": TASKS["medium_rename_fk"].target_schema_ddl,
+                        "target_schema_ddl": TASKS["medium_rename_fk"].target_schema_ddl,
+                        "last_sql_result": "SUCCESS",
+                        "downtime_pct": 0.0,
+                        "step_count": 1,
+                        "cumulative_downtime_pct": 0.0,
+                        "task_id": "medium_rename_fk",
+                        "schema_match_pct": 1.0,
+                        "episode_id": "episode-1",
+                    },
+                    "done": True,
+                    "reward": 0.0,
+                    "metadata": {},
+                }
+            )
+        if url.endswith("/grader"):
+            return FakeResponse({"score": 1.0})
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr("inference.API_KEY", "test-key")
+    monkeypatch.setattr("inference._get_client", lambda: FakeClient())
+    monkeypatch.setattr("inference.requests.post", fake_post)
+
+    score = run_episode("medium_rename_fk", seed=42)
+
+    assert score == 1.0
+    assert create_calls
+    assert create_calls[0]["seed"] == 42
+    assert create_calls[0]["temperature"] == 0.0
 
 
 def test_baseline_recommended_step_handles_easy_in_single_statement():

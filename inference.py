@@ -460,6 +460,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
                 model=MODEL_NAME,
                 messages=messages,
                 temperature=0.0,
+                seed=seed,
                 max_tokens=200,
             )
             sql = _normalize_sql(completion.choices[0].message.content or "")
@@ -489,6 +490,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
                     model=MODEL_NAME,
                     messages=messages,
                     temperature=0.0,
+                    seed=seed,
                     max_tokens=200,
                 )
                 sql = _normalize_sql(completion.choices[0].message.content or "")
