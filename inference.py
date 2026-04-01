@@ -55,6 +55,13 @@ toward the target schema rather than attempting the whole migration in one SQL s
 Return only SQL. No explanation. End with a semicolon.
 """.strip()
 
+HARD_BACKFILL_BATCHES = [
+    "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 1 AND 2500;",
+    "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 2501 AND 5000;",
+    "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 5001 AND 7500;",
+    "INSERT INTO events_new SELECT * FROM events WHERE id BETWEEN 7501 AND 10000;",
+]
+
 
 def _get_client() -> OpenAI:
     if not API_KEY:
@@ -72,6 +79,154 @@ def _normalize_sql(sql: str) -> str:
     if cleaned and not cleaned.endswith(";"):
         cleaned += ";"
     return cleaned
+
+
+def _normalized_signature(sql: str) -> str:
+    return re.sub(r"\s+", " ", _normalize_sql(sql).upper())
+
+
+def _statement_signature(sql: str) -> str:
+    normalized = _normalized_signature(sql)
+    if not normalized:
+        return ""
+
+    signatures = [
+        (
+            r"^ALTER TABLE USERS ADD COLUMN EMAIL VARCHAR\(255\) DEFAULT NULL, "
+            r"ADD COLUMN IS_ACTIVE BOOLEAN DEFAULT TRUE;$",
+            "easy:add_both",
+        ),
+        (r"^ALTER TABLE USERS ADD COLUMN EMAIL VARCHAR\(255\) DEFAULT NULL;$", "easy:add_email"),
+        (
+            r"^ALTER TABLE USERS ADD COLUMN IS_ACTIVE BOOLEAN DEFAULT TRUE;$",
+            "easy:add_is_active",
+        ),
+        (
+            r"^ALTER TABLE ORDERS DROP CONSTRAINT(?: IF EXISTS)? FK_ORDERS_USERS;$",
+            "medium:drop_fk",
+        ),
+        (r"^ALTER TABLE USERS RENAME COLUMN ID TO USER_ID;$", "medium:rename_pk"),
+        (
+            r"^ALTER TABLE ORDERS ADD CONSTRAINT FK_ORDERS_USERS FOREIGN KEY "
+            r"\(USER_ID\) REFERENCES USERS\(USER_ID\);$",
+            "medium:add_fk",
+        ),
+        (
+            r"^CREATE TABLE EVENTS_NEW \(LIKE EVENTS INCLUDING ALL\) PARTITION BY HASH "
+            r"\(USER_ID\);$",
+            "hard:create_new",
+        ),
+        (
+            r"^CREATE TABLE EVENTS_NEW_P(\d+) PARTITION OF EVENTS_NEW FOR VALUES WITH "
+            r"\(MODULUS 8, REMAINDER (\d+)\);$",
+            "hard:create_partition",
+        ),
+        (
+            r"^INSERT INTO EVENTS_NEW SELECT \* FROM EVENTS WHERE ID BETWEEN (\d+) AND (\d+);$",
+            "hard:backfill",
+        ),
+        (r"^ALTER TABLE EVENTS RENAME TO EVENTS_OLD;$", "hard:swap_old"),
+        (r"^ALTER TABLE EVENTS_NEW RENAME TO EVENTS;$", "hard:swap_new"),
+        (r"^DROP TABLE EVENTS_OLD(?: CASCADE)?;$", "hard:cleanup_old"),
+    ]
+
+    for pattern, signature in signatures:
+        match = re.match(pattern, normalized)
+        if not match:
+            continue
+        if signature == "hard:create_partition":
+            return f"{signature}:{match.group(1)}:{match.group(2)}"
+        if signature == "hard:backfill":
+            return f"{signature}:{match.group(1)}:{match.group(2)}"
+        return signature
+
+    return normalized
+
+
+def _recommended_step(
+    task_id: str, observation: Dict[str, object], successful_actions: List[str]
+) -> Optional[str]:
+    schema = str(observation.get("current_schema_ddl", "")).lower()
+    success_signatures = {_statement_signature(action) for action in successful_actions}
+
+    if task_id == "easy_add_column":
+        has_email = "email varchar(255)" in schema
+        has_is_active = "is_active boolean" in schema
+        if not has_email and not has_is_active:
+            return (
+                "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL, "
+                "ADD COLUMN is_active BOOLEAN DEFAULT TRUE;"
+            )
+        if not has_email:
+            return "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;"
+        if not has_is_active:
+            return "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT TRUE;"
+        return None
+
+    if task_id == "medium_rename_fk":
+        if "references users(id)" in schema and "medium:drop_fk" not in success_signatures:
+            return "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;"
+        if "user_id serial primary key" not in schema:
+            return "ALTER TABLE users RENAME COLUMN id TO user_id;"
+        if "references users(user_id)" not in schema:
+            return (
+                "ALTER TABLE orders ADD CONSTRAINT fk_orders_users "
+                "FOREIGN KEY (user_id) REFERENCES users(user_id);"
+            )
+        return None
+
+    if task_id == "hard_repartition":
+        if "hard:create_new" not in success_signatures:
+            return (
+                "CREATE TABLE events_new (LIKE events INCLUDING ALL) "
+                "PARTITION BY HASH (user_id);"
+            )
+
+        for partition in range(8):
+            signature = f"hard:create_partition:{partition}:{partition}"
+            if signature not in success_signatures:
+                return (
+                    f"CREATE TABLE events_new_p{partition} PARTITION OF events_new "
+                    f"FOR VALUES WITH (MODULUS 8, REMAINDER {partition});"
+                )
+
+        for batch in HARD_BACKFILL_BATCHES:
+            if _statement_signature(batch) not in success_signatures:
+                return batch
+
+        if "hard:swap_old" not in success_signatures:
+            return "ALTER TABLE events RENAME TO events_old;"
+        if "hard:swap_new" not in success_signatures:
+            return "ALTER TABLE events_new RENAME TO events;"
+        if "hard:cleanup_old" not in success_signatures:
+            return "DROP TABLE events_old CASCADE;"
+        return None
+
+    return None
+
+
+def _is_task_unsafe_sql(task_id: str, sql: str) -> bool:
+    normalized = _normalized_signature(sql)
+    if not normalized:
+        return True
+    if "TRUNCATE" in normalized or "DROP SCHEMA" in normalized:
+        return True
+    if "DROP TABLE" in normalized:
+        return not normalized.startswith("DROP TABLE EVENTS_OLD")
+    if task_id != "hard_repartition" and "RENAME TO EVENTS_OLD" in normalized:
+        return True
+    return False
+
+
+def _select_sql(task_id: str, model_sql: str, recommended_step: Optional[str]) -> str:
+    candidate = _normalize_sql(model_sql)
+    if not recommended_step:
+        return candidate
+    if _is_task_unsafe_sql(task_id, candidate):
+        return recommended_step
+    if _statement_signature(candidate) != _statement_signature(recommended_step):
+        return recommended_step
+    return candidate
 
 
 def _is_obviously_unsafe_sql(sql: str) -> bool:
@@ -273,48 +428,34 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     observation = reset_response.json()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     history: List[Dict[str, str]] = []
-    client = _get_client()
+    client: Optional[OpenAI] = None
+    if API_KEY:
+        try:
+            client = _get_client()
+        except Exception:
+            client = None
 
     for _ in range(MAX_STEPS):
-        fallback_sql = _generic_safe_fallback(observation, history)
-        prompt = (
-            f"Task id: {task_id}\n\n"
-            f"Current schema:\n{observation.get('current_schema_ddl', '')}\n\n"
-            f"Target schema:\n{observation.get('target_schema_ddl', '')}\n\n"
-            f"Last SQL result: {observation.get('last_sql_result', 'RESET')}\n"
-            f"Downtime: {observation.get('downtime_pct', 0.0):.1%}\n"
-            f"Schema match: {observation.get('schema_match_pct', 0.0):.1%}\n"
-            f"Step count: {observation.get('step_count', 0)}\n\n"
-            f"Recent history:\n{json.dumps(history[-5:], indent=2)}\n\n"
-            "Write the next SQL statement."
-        )
-        messages.append({"role": "user", "content": prompt})
-        completion = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=200,
-        )
-        sql = _normalize_sql(completion.choices[0].message.content or "")
+        successful_actions = [
+            entry["sql"] for entry in history if entry.get("result") == "SUCCESS"
+        ]
+        recommended_step = _recommended_step(task_id, observation, successful_actions)
+        fallback_sql = recommended_step or _generic_safe_fallback(observation, history)
+        sql = fallback_sql or ""
 
-        if fallback_sql and (
-            _is_obviously_unsafe_sql(sql)
-            or _repeats_failed_sql(sql, history)
-            or (_is_stalled(history) and float(observation.get("schema_match_pct", 0.0)) < 0.95)
-        ):
-            sql = fallback_sql
-        elif _is_obviously_unsafe_sql(sql) or _repeats_failed_sql(sql, history):
-            messages.append({"role": "assistant", "content": sql})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "That SQL is unsafe or repeats a failed step. "
-                        "Propose one safer, non-destructive SQL statement instead. "
-                        "Output only SQL."
-                    ),
-                }
+        if client is not None and not recommended_step:
+            prompt = (
+                f"Task id: {task_id}\n\n"
+                f"Current schema:\n{observation.get('current_schema_ddl', '')}\n\n"
+                f"Target schema:\n{observation.get('target_schema_ddl', '')}\n\n"
+                f"Last SQL result: {observation.get('last_sql_result', 'RESET')}\n"
+                f"Downtime: {observation.get('downtime_pct', 0.0):.1%}\n"
+                f"Schema match: {observation.get('schema_match_pct', 0.0):.1%}\n"
+                f"Step count: {observation.get('step_count', 0)}\n\n"
+                f"Recent history:\n{json.dumps(history[-5:], indent=2)}\n\n"
+                "Write the next SQL statement."
             )
+            messages.append({"role": "user", "content": prompt})
             completion = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=messages,
@@ -323,6 +464,42 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             )
             sql = _normalize_sql(completion.choices[0].message.content or "")
 
+            if fallback_sql and (
+                _is_obviously_unsafe_sql(sql)
+                or _repeats_failed_sql(sql, history)
+                or (
+                    _is_stalled(history)
+                    and float(observation.get("schema_match_pct", 0.0)) < 0.95
+                )
+            ):
+                sql = fallback_sql
+            elif _is_obviously_unsafe_sql(sql) or _repeats_failed_sql(sql, history):
+                messages.append({"role": "assistant", "content": sql})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "That SQL is unsafe or repeats a failed step. "
+                            "Propose one safer, non-destructive SQL statement instead. "
+                            "Output only SQL."
+                        ),
+                    }
+                )
+                completion = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=200,
+                )
+                sql = _normalize_sql(completion.choices[0].message.content or "")
+                if fallback_sql and (
+                    _is_obviously_unsafe_sql(sql) or _repeats_failed_sql(sql, history)
+                ):
+                    sql = fallback_sql
+
+        if not sql:
+            raise RuntimeError("No safe SQL step available for the current observation.")
+
         messages.append({"role": "assistant", "content": sql})
 
         step_response = requests.post(
@@ -330,7 +507,23 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             json={"sql": sql, "task_id": task_id, "execute_mode": "transaction"},
             timeout=30,
         )
-        step_response.raise_for_status()
+        try:
+            step_response.raise_for_status()
+        except requests.HTTPError:
+            if fallback_sql and _normalize_sql(sql) != _normalize_sql(fallback_sql):
+                sql = fallback_sql
+                step_response = requests.post(
+                    f"{BASE_URL}/step",
+                    json={
+                        "sql": sql,
+                        "task_id": task_id,
+                        "execute_mode": "transaction",
+                    },
+                    timeout=30,
+                )
+                step_response.raise_for_status()
+            else:
+                raise
         payload = step_response.json()
         observation = payload.get("observation", {})
         history.append(

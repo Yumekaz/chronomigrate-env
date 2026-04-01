@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from inference import _generic_safe_fallback, _is_obviously_unsafe_sql, _repeats_failed_sql
+from inference import (
+    _generic_safe_fallback,
+    _is_obviously_unsafe_sql,
+    _recommended_step,
+    _repeats_failed_sql,
+    _select_sql,
+)
 from models import MigrationAction
 from server.app import (
     GraderRequest,
@@ -370,6 +376,43 @@ def test_baseline_endpoint_surfaces_script_error(monkeypatch):
     assert payload["returncode"] == 1
 
 
+def test_baseline_recommended_step_handles_easy_in_single_statement():
+    observation = {"current_schema_ddl": TASKS["easy_add_column"].starting_schema_sql}
+
+    sql = _recommended_step("easy_add_column", observation, [])
+
+    assert sql == (
+        "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL, "
+        "ADD COLUMN is_active BOOLEAN DEFAULT TRUE;"
+    )
+
+
+def test_baseline_recommended_step_handles_medium_fk_sequence():
+    starting = {"current_schema_ddl": TASKS["medium_rename_fk"].starting_schema_sql}
+    after_drop = {
+        "current_schema_ddl": TASKS["medium_rename_fk"].starting_schema_sql.replace(
+            "CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(id)", ""
+        )
+    }
+    after_rename = {
+        "current_schema_ddl": TASKS["medium_rename_fk"].target_schema_ddl.replace(
+            "CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(user_id)",
+            "",
+        )
+    }
+
+    first = _recommended_step("medium_rename_fk", starting, [])
+    second = _recommended_step("medium_rename_fk", after_drop, [first])
+    third = _recommended_step("medium_rename_fk", after_rename, [first, second])
+
+    assert first == "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;"
+    assert second == "ALTER TABLE users RENAME COLUMN id TO user_id;"
+    assert third == (
+        "ALTER TABLE orders ADD CONSTRAINT fk_orders_users "
+        "FOREIGN KEY (user_id) REFERENCES users(user_id);"
+    )
+
+
 def test_baseline_generic_fallback_recommends_hard_safe_sequence():
     partition_steps = [
         "CREATE TABLE events_new (LIKE events INCLUDING ALL) PARTITION BY HASH (user_id);",
@@ -479,6 +522,20 @@ def test_baseline_generic_fallback_recommends_hard_safe_sequence():
         "FOR VALUES WITH (MODULUS 8, REMAINDER 2);"
     )
     assert next_backfill == "INSERT INTO events_new SELECT * FROM events;"
+
+
+def test_baseline_select_sql_prefers_safe_recommended_step():
+    recommended = "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;"
+
+    unsafe = _select_sql("medium_rename_fk", "DROP TABLE users;", recommended)
+    off_sequence = _select_sql(
+        "medium_rename_fk",
+        "ALTER TABLE users RENAME COLUMN id TO user_id;",
+        recommended,
+    )
+
+    assert unsafe == recommended
+    assert off_sequence == recommended
 
 
 def test_baseline_marks_destructive_sql_as_unsafe():
