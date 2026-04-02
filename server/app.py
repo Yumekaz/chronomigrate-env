@@ -48,7 +48,7 @@ class GraderRequest(BaseModel):
 
 
 def health() -> Dict[str, str]:
-    return {"status": "healthy"}
+    return {"status": "ok"}
 
 
 def metadata() -> Dict[str, object]:
@@ -187,7 +187,8 @@ def grade_episode(req: GraderRequest) -> Dict:
         if current_state.current_data_hash == current_state.data_integrity_hash
         else 0.0
     )
-    score = current_state.schema_match_pct * availability * data_integrity
+    raw_score = current_state.schema_match_pct * availability * data_integrity
+    score = max(0.0, min(1.0, raw_score))
     return {
         "score": round(score, 4),
         "schema_match": round(current_state.schema_match_pct, 4),

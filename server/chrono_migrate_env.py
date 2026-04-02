@@ -15,6 +15,9 @@ from server.schema_grader import compute_data_hash, compute_schema_match
 from server.tasks import TASKS
 
 
+SCHEMA_COMPLETE_TOLERANCE = 1e-9
+
+
 class ChronoMigrateEnv(Environment):
     def __init__(self):
         self.db = DBManager()
@@ -121,7 +124,8 @@ class ChronoMigrateEnv(Environment):
             self._state.failed_background_queries += des_result.queries_failed
             self._state.cumulative_reward += step_reward
             self._state.done = (
-                self._state.step_count >= self._state.max_steps or new_schema_match >= 1.0
+                self._state.step_count >= self._state.max_steps
+                or new_schema_match >= (1.0 - SCHEMA_COMPLETE_TOLERANCE)
             )
             availability = self._compute_availability(
                 self._state.total_background_queries, self._state.failed_background_queries
@@ -164,7 +168,9 @@ class ChronoMigrateEnv(Environment):
         return self._build_observation(message, -0.05)
 
     def _build_observation(self, last_result: str, reward: float) -> MigrationObservation:
-        state = self.state
+        state = self._state
+        if state is None:
+            raise RuntimeError("Episode not initialized. Call reset() first.")
         total = state.total_background_queries
         failed = state.failed_background_queries
         return MigrationObservation(

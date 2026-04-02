@@ -220,7 +220,7 @@ def test_create_app_factory_returns_fastapi_app():
     health = client.get("/health")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "healthy"}
+    assert health.json() == {"status": "ok"}
 
 
 def test_create_fastapi_app_factory_returns_fastapi_app():
@@ -229,7 +229,7 @@ def test_create_fastapi_app_factory_returns_fastapi_app():
     health = client.get("/health")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "healthy"}
+    assert health.json() == {"status": "ok"}
 
 
 def test_state_endpoint_returns_active_episode():
@@ -273,6 +273,33 @@ def test_task_mismatch_is_penalized_gracefully():
     assert env.last_step_reward == -0.05
     assert obs.reward == -0.05
     assert env.state.step_count == 1
+
+
+def test_medium_task_completes_after_canonical_three_step_sequence():
+    env = ChronoMigrateEnv()
+    env.reset({"task_id": "medium_rename_fk", "seed": 42})
+
+    steps = [
+        "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;",
+        "ALTER TABLE users RENAME COLUMN id TO user_id;",
+        (
+            "ALTER TABLE orders ADD CONSTRAINT fk_orders_users "
+            "FOREIGN KEY (user_id) REFERENCES users(user_id);"
+        ),
+    ]
+
+    for sql in steps:
+        obs = env.step(
+            MigrationAction(
+                sql=sql,
+                task_id="medium_rename_fk",
+                execute_mode="transaction",
+            )
+        )
+
+    assert obs.schema_match_pct >= 0.999999999
+    assert obs.done is True
+    assert env.state.done is True
 
 
 def test_unexpected_step_error_is_penalized_gracefully(monkeypatch):

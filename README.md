@@ -4,6 +4,9 @@ emoji: 📊
 colorFrom: gray
 colorTo: red
 sdk: docker
+tags:
+  - openenv
+  - rl-environment
 pinned: false
 ---
 
