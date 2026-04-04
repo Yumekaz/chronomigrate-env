@@ -11,75 +11,148 @@ pinned: false
 ---
 
 # ChronoMigrate-Env
-**Zero-Downtime Database Migration RL Environment**
 
-## Environment Description
-ChronoMigrate-Env is an OpenEnv-compatible reinforcement learning environment for zero-downtime database schema migration. Agents are graded on three things at once:
+ChronoMigrate-Env is an OpenEnv-compatible environment for training and evaluating agents that perform zero-downtime database schema migrations.
 
-- schema correctness
-- operational availability during the migration
-- data integrity after the migration
+Instead of rewarding only final schema correctness, ChronoMigrate also measures operational availability and data integrity while the migration is happening. That makes it useful for benchmarking agents on realistic migration behavior, not just SQL syntax.
 
-The runtime simulates transactional load with a deterministic discrete-event model, analyzes SQL lock impact with `sqlglot`, and supports PostgreSQL-first execution with SQLite fallback.
+## Why It Exists
 
-## Action Space
+Real production migrations are judged by more than whether the final schema looks right. A good migration must:
+
+- preserve data
+- minimize downtime
+- avoid destructive shortcuts
+- make progress in safe, reversible steps
+
+ChronoMigrate turns that into a deterministic environment that can be used for agent evaluation, benchmarking, and baseline comparisons.
+
+## What You Get
+
+- OpenEnv-compatible `reset` / `step` / `state` runtime
+- three graded tasks with clear easy-to-hard progression
+- deterministic scoring from schema match, availability, and data integrity
+- PostgreSQL-first execution with SQLite fallback
+- Docker-ready deployment for Hugging Face Spaces
+- baseline inference script using the OpenAI client
+
+## Environment Overview
+
+### Action Space
+
 | Field | Type | Description |
 |---|---|---|
-| `sql` | string | Raw SQL statement to execute against the database |
-| `task_id` | string | Task being solved |
+| `sql` | string | SQL statement to execute |
+| `task_id` | string | Task identifier |
 | `execute_mode` | string | `transaction` or `autocommit` |
 
-## Observation Space
+### Observation Space
+
 | Field | Type | Description |
 |---|---|---|
-| `done` | bool | Whether the episode has ended |
-| `reward` | float | Reward for the most recent step |
-| `current_schema_ddl` | string | Current schema as DDL |
-| `target_schema_ddl` | string | Target schema |
-| `last_sql_result` | string | `SUCCESS` or backend error |
-| `downtime_pct` | float | Failure rate for the latest step |
-| `step_count` | int | Episode step counter |
+| `done` | bool | Whether the episode has terminated |
+| `reward` | float | Reward from the latest step |
+| `current_schema_ddl` | string | Current schema |
+| `target_schema_ddl` | string | Goal schema |
+| `last_sql_result` | string | Database execution result |
+| `downtime_pct` | float | Downtime caused by the latest step |
+| `step_count` | int | Current step number |
 | `cumulative_downtime_pct` | float | Rolling downtime signal |
-| `task_id` | string | Active task identifier |
+| `task_id` | string | Active task |
 | `schema_match_pct` | float | Progress toward target schema |
-| `episode_id` | string | Unique episode id |
+| `episode_id` | string | Episode identifier |
 
 ## Tasks
+
 | Task | Difficulty | Max Steps | Description |
 |---|---|---|---|
-| `easy_add_column` | Easy | 5 | Add 2 columns with DEFAULT values |
-| `medium_rename_fk` | Medium | 10 | Rename a primary key column and update FK references |
+| `easy_add_column` | Easy | 5 | Add two defaulted columns safely |
+| `medium_rename_fk` | Medium | 10 | Rename a primary key column and repair foreign key references |
 | `hard_repartition` | Hard | 20 | Repartition a large table under simulated load |
 
-## Baseline Scores (gpt-4o-mini)
-The required baseline entrypoint is the root-level `inference.py` script. It uses a generic DDL-driven fallback strategy for safer migration planning and expects one of `HF_TOKEN`, `API_KEY`, or `OPENAI_API_KEY` to be configured.
+## Scoring Model
 
-Expected target scores after redeploy:
+Each step is rewarded with a multiplicative objective:
+
+```text
+R_step = schema_match_delta * (1 - downtime_pct) * data_integrity
+```
+
+Episode grading uses the final state:
+
+```text
+score = schema_match * availability * data_integrity
+```
+
+This makes destructive shortcuts unattractive. An agent that drops data or causes severe downtime cannot recover to a high score just by matching the final schema.
+
+## Verified Baseline Scores
+
+The baseline entrypoint is the root-level `inference.py` script. It uses the OpenAI client and reads runtime configuration from environment variables.
+
+Current verified scores with `gpt-4o-mini`:
 
 | Task | Score |
 |---|---|
-| `easy_add_column` | `~0.85+` |
-| `medium_rename_fk` | `~0.55+` |
-| `hard_repartition` | `~0.25+` |
+| `easy_add_column` | `1.0000` |
+| `medium_rename_fk` | `0.7873` |
+| `hard_repartition` | `0.8548` |
 
-## Setup
+## Quick Start
+
+### Local Python Setup
+
 ```bash
 python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+### Run with Docker
+
+```bash
 docker build -t chronomigrate-env .
 docker run --rm -p 7860:7860 chronomigrate-env
 ```
 
-Set one of `HF_TOKEN`, `API_KEY`, or `OPENAI_API_KEY` before running the baseline script. `MODEL_NAME` defaults to `gpt-4o-mini`.
+### Validate the Environment
 
-## Usage
+```bash
+openenv validate .
+openenv validate --url http://127.0.0.1:7860
+```
+
+## API Endpoints
+
+Core runtime endpoints:
+
+- `POST /reset`
+- `POST /step`
+- `GET /state`
+- `GET /tasks`
+- `POST /grader`
+- `POST /baseline`
+- `GET /health`
+- `GET /schema`
+- `GET /metadata`
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:7860/reset ^
+  -H "Content-Type: application/json" ^
+  -d "{\"task_id\":\"easy_add_column\",\"seed\":42}"
+```
+
+## Client Usage
+
 ```python
 from client import ChronoMigrateClient
 from models import MigrationAction
 
-async with ChronoMigrateClient(base_url="http://localhost:7860") as env:
-    obs = await env.reset(config={"task_id": "easy_add_column", "seed": 42})
-    step = await env.step(
+async with ChronoMigrateClient(base_url="http://127.0.0.1:7860") as env:
+    observation = await env.reset(config={"task_id": "easy_add_column", "seed": 42})
+    result = await env.step(
         MigrationAction(
             sql="ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;",
             task_id="easy_add_column",
@@ -88,22 +161,50 @@ async with ChronoMigrateClient(base_url="http://localhost:7860") as env:
     )
 ```
 
-Run the baseline script:
+## Baseline Inference
+
+Set these environment variables before running the baseline script:
+
+- `OPENAI_API_KEY` or `HF_TOKEN` or `API_KEY`
+- `API_BASE_URL` (defaults to `https://api.openai.com/v1`)
+- `MODEL_NAME` (defaults to `gpt-4o-mini`)
+- `ENV_BASE_URL` (defaults to `http://localhost:7860`)
+
+Run:
+
 ```bash
 python inference.py --all-tasks
 ```
 
-## How Judging Works
-Per-step reward is multiplicative:
+## Deployment Notes
+
+- Hugging Face Space runtime: Docker
+- Base image: `ghcr.io/meta-pytorch/openenv-base:latest`
+- PostgreSQL is initialized in user space when available
+- SQLite fallback is supported and validated
+
+## Project Layout
 
 ```text
-R_step = schema_match_delta * (1 - downtime_pct) * data_integrity
+chronomigrate-env/
+├── openenv.yaml
+├── Dockerfile
+├── pyproject.toml
+├── requirements.txt
+├── README.md
+├── models.py
+├── client.py
+├── inference.py
+├── server/
+├── tests/
+└── scripts/
 ```
 
-Final grading uses the current episode state:
+## Current Status
 
-```text
-score = schema_match * availability * data_integrity
-```
+- local validation passing
+- Docker build and runtime verified
+- Hugging Face Space deployment verified
+- deterministic baseline reproduction verified
 
-This design prevents reward hacking. An agent that drops data or causes full downtime gets multiplied toward zero even if the target schema appears to match.
+ChronoMigrate-Env is ready to use as a database-migration evaluation environment for OpenEnv-compatible agents.
