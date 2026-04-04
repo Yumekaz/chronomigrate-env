@@ -220,7 +220,7 @@ def test_create_app_factory_returns_fastapi_app():
     health = client.get("/health")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    assert health.json() == {"status": "healthy"}
 
 
 def test_create_fastapi_app_factory_returns_fastapi_app():
@@ -229,7 +229,7 @@ def test_create_fastapi_app_factory_returns_fastapi_app():
     health = client.get("/health")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    assert health.json() == {"status": "healthy"}
 
 
 def test_state_endpoint_returns_active_episode():
