@@ -48,7 +48,7 @@ class GraderRequest(BaseModel):
 
 
 def health() -> Dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "healthy"}
 
 
 def metadata() -> Dict[str, object]:
