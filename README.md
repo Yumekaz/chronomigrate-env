@@ -278,7 +278,3 @@ Important files:
 - `server/lock_analyzer.py`: SQL lock and downtime heuristics
 - `inference.py`: root-level baseline runner
 
-
-## Metadata
-
-- Last update: 2026-04-06
