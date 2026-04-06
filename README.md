@@ -16,29 +16,20 @@ ChronoMigrate-Env is an OpenEnv-compatible environment for training and evaluati
 
 Instead of rewarding only final schema correctness, ChronoMigrate also measures operational availability and data integrity while the migration is happening. That makes it useful for benchmarking agents on realistic migration behavior, not just SQL syntax.
 
-## Why It Exists
+## Environment Description
 
-Real production migrations are judged by more than whether the final schema looks right. A good migration must:
+Real production migrations are judged by more than whether the final schema looks right. A successful migration must preserve data, minimize downtime, avoid destructive shortcuts, and still reach the target schema.
 
-- preserve data
-- minimize downtime
-- avoid destructive shortcuts
-- make progress in safe, reversible steps
+ChronoMigrate turns that problem into a deterministic evaluation environment with:
 
-ChronoMigrate turns that into a deterministic environment that can be used for agent evaluation, benchmarking, and baseline comparisons.
-
-## What You Get
-
-- OpenEnv-compatible `reset` / `step` / `state` runtime
+- OpenEnv-compatible `reset`, `step`, and `state` interactions
 - three graded tasks with clear easy-to-hard progression
-- deterministic scoring from schema match, availability, and data integrity
+- multiplicative scoring from schema match, availability, and data integrity
 - PostgreSQL-first execution with SQLite fallback
 - Docker-ready deployment for Hugging Face Spaces
-- baseline inference script using the OpenAI client
+- baseline inference through `inference.py` with configurable model backends
 
-## Environment Overview
-
-### Action Space
+## Action Space
 
 | Field | Type | Description |
 |---|---|---|
@@ -46,7 +37,7 @@ ChronoMigrate turns that into a deterministic environment that can be used for a
 | `task_id` | string | Task identifier |
 | `execute_mode` | string | `transaction` or `autocommit` |
 
-### Observation Space
+## Observation Space
 
 | Field | Type | Description |
 |---|---|---|
@@ -86,25 +77,36 @@ score = schema_match * availability * data_integrity
 
 This makes destructive shortcuts unattractive. An agent that drops data or causes severe downtime cannot recover to a high score just by matching the final schema.
 
-## Verified Baseline Scores
+## Baseline Scores
 
-The baseline entrypoint is the root-level `inference.py` script. It uses the OpenAI client and reads runtime configuration from environment variables.
+The baseline entrypoint is the root-level `inference.py` script. By default it uses the OpenAI client, and it can also target other OpenAI-compatible endpoints through environment variables.
 
-Current verified scores with `gpt-4o-mini`:
+Observed `gpt-4o-mini` scores after removing scripted fallback logic:
 
 | Task | Score |
 |---|---|
 | `easy_add_column` | `1.0000` |
 | `medium_rename_fk` | `0.7873` |
-| `hard_repartition` | `0.8548` |
+| `hard_repartition` | `0.6843` |
 
-## Quick Start
+Hard-task performance is model-sensitive, so judge-time results with Nemotron 3 Super may differ from the `gpt-4o-mini` baseline above.
+
+## Setup
 
 ### Local Python Setup
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate
+```
+
+Activate the environment:
+
+- Windows PowerShell: `.venv\Scripts\Activate.ps1`
+- Unix-like shells: `source .venv/bin/activate`
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
@@ -122,7 +124,9 @@ openenv validate .
 openenv validate --url http://127.0.0.1:7860
 ```
 
-## API Endpoints
+## Usage
+
+### API Endpoints
 
 Core runtime endpoints:
 
@@ -144,7 +148,7 @@ curl -X POST http://127.0.0.1:7860/reset ^
   -d "{\"task_id\":\"easy_add_column\",\"seed\":42}"
 ```
 
-## Client Usage
+### Client Usage
 
 ```python
 from client import ChronoMigrateClient
@@ -161,7 +165,7 @@ async with ChronoMigrateClient(base_url="http://127.0.0.1:7860") as env:
     )
 ```
 
-## Baseline Inference
+### Baseline Inference
 
 Set these environment variables before running the baseline script:
 
@@ -187,24 +191,15 @@ python inference.py --all-tasks
 
 ```text
 chronomigrate-env/
-├── openenv.yaml
-├── Dockerfile
-├── pyproject.toml
-├── requirements.txt
-├── README.md
-├── models.py
-├── client.py
-├── inference.py
-├── server/
-├── tests/
-└── scripts/
+|-- openenv.yaml
+|-- Dockerfile
+|-- pyproject.toml
+|-- requirements.txt
+|-- README.md
+|-- models.py
+|-- client.py
+|-- inference.py
+|-- server/
+|-- tests/
+`-- scripts/
 ```
-
-## Current Status
-
-- local validation passing
-- Docker build and runtime verified
-- Hugging Face Space deployment verified
-- deterministic baseline reproduction verified
-
-ChronoMigrate-Env is ready to use as a database-migration evaluation environment for OpenEnv-compatible agents.
