@@ -203,3 +203,8 @@ chronomigrate-env/
 |-- tests/
 `-- scripts/
 ```
+
+
+## Metadata
+
+- Last update: 2026-04-06
