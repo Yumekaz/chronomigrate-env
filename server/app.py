@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from threading import RLock
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -32,9 +33,6 @@ ENV_TAGS = [
     "schema-migration",
 ]
 
-env = ChronoMigrateEnv()
-
-
 class MCPRequest(BaseModel):
     jsonrpc: str = "2.0"
     id: Optional[object] = None
@@ -45,6 +43,97 @@ class MCPRequest(BaseModel):
 class GraderRequest(BaseModel):
     task_id: str
     episode_id: Optional[str] = None
+
+
+class TaskScopedEnv:
+    """Serialize env access and keep one env per task id."""
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._envs: Dict[str, ChronoMigrateEnv] = {}
+        self._active_task_id: Optional[str] = None
+        self._last_step_reward = 0.0
+        self._last_metadata: Dict[str, object] = {}
+
+    def _resolve_task_id(self, config: Optional[dict] = None) -> Optional[str]:
+        if config:
+            task_id = config.get("task_id")
+            if task_id:
+                return str(task_id)
+        return self._active_task_id
+
+    def _get_env(self, task_id: Optional[str], create: bool = True) -> ChronoMigrateEnv:
+        if task_id is not None:
+            env = self._envs.get(task_id)
+            if env is None and create:
+                env = ChronoMigrateEnv()
+                self._envs[task_id] = env
+            if env is not None:
+                return env
+
+        if self._active_task_id is not None:
+            env = self._envs.get(self._active_task_id)
+            if env is not None:
+                return env
+
+        if not create:
+            raise RuntimeError("No active episode. Call /reset first.")
+
+        default_task_id = "__default__"
+        env = self._envs.get(default_task_id)
+        if env is None:
+            env = ChronoMigrateEnv()
+            self._envs[default_task_id] = env
+        return env
+
+    def reset(self, config: Optional[dict] = None):
+        with self._lock:
+            task_id = self._resolve_task_id(config)
+            env = self._get_env(task_id, create=True)
+            observation = env.reset(config or {})
+            state = env.state
+            self._active_task_id = state.task_id
+            self._last_step_reward = 0.0
+            self._last_metadata = {"event": "reset", "task_id": state.task_id}
+            return observation
+
+    def step(self, action: MigrationAction):
+        with self._lock:
+            env = self._get_env(action.task_id, create=True)
+            observation = env.step(action)
+            self._active_task_id = action.task_id
+            self._last_step_reward = env.last_step_reward
+            self._last_metadata = dict(env.last_metadata or {})
+            return observation
+
+    @property
+    def state(self):
+        with self._lock:
+            env = self._get_env(None, create=False)
+            return env.state
+
+    @property
+    def last_step_reward(self) -> float:
+        with self._lock:
+            return self._last_step_reward
+
+    @property
+    def last_metadata(self) -> Dict[str, object]:
+        with self._lock:
+            return dict(self._last_metadata)
+
+    def episode_snapshot(self, task_id: str) -> Dict[str, object]:
+        with self._lock:
+            scoped_env = self._envs.get(task_id)
+            if scoped_env is None:
+                raise RuntimeError("No active episode for this task")
+            return {
+                "state": scoped_env.state,
+                "action_history": list(scoped_env.action_history),
+            }
+
+
+env = TaskScopedEnv()
 
 
 def health() -> Dict[str, str]:
@@ -133,13 +222,12 @@ def reset(config: Optional[dict] = None):
 def step(action: MigrationAction):
     try:
         observation = env.step(action)
-        current_state = env.state
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "observation": observation.model_dump(),
-        "reward": env.last_step_reward,
-        "done": current_state.done,
+        "reward": observation.reward,
+        "done": observation.done,
         "metadata": env.last_metadata,
     }
 
@@ -170,10 +258,11 @@ def list_tasks() -> List[Dict]:
 
 def grade_episode(req: GraderRequest) -> Dict:
     try:
-        current_state = env.state
+        snapshot = env.episode_snapshot(req.task_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    current_state = snapshot["state"]
     if current_state.task_id != req.task_id:
         return {"score": 0.0, "feedback": "No active episode for this task"}
     if req.episode_id and req.episode_id != current_state.episode_id:
@@ -187,7 +276,16 @@ def grade_episode(req: GraderRequest) -> Dict:
         if current_state.current_data_hash == current_state.data_integrity_hash
         else 0.0
     )
-    raw_score = current_state.schema_match_pct * availability * data_integrity
+    task_def = TASKS[req.task_id]
+    raw_score = task_def.grade_fn(
+        current_schema_ddl=current_state.current_schema_ddl,
+        target_schema_ddl=current_state.target_schema_ddl,
+        data_hash_before=current_state.data_integrity_hash,
+        data_hash_after=current_state.current_data_hash,
+        availability_pct=availability,
+        action_history=snapshot["action_history"],
+        steps_used=current_state.step_count,
+    )
     score = max(0.0, min(1.0, raw_score))
     return {
         "score": round(score, 4),

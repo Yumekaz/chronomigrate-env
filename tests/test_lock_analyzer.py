@@ -58,7 +58,8 @@ def test_batched_insert_select_scales_lock_ticks_with_batch_size():
     assert profile.failure_rate == 0.15
 
 
-def test_invalid_sql_returns_no_lock():
+def test_invalid_sql_uses_conservative_unknown_lock_profile():
     profile = analyze_lock("THIS IS NOT SQL")
-    assert profile.lock_ticks == 0
-    assert profile.failure_rate == 0.0
+    assert profile.lock_type == "UNKNOWN"
+    assert profile.lock_ticks == 1
+    assert profile.failure_rate == 0.5

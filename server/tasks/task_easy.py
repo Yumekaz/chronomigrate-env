@@ -7,7 +7,7 @@ STARTING_SCHEMA = """
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(100) NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT '2024-01-01 00:00:00'
 );
 """
 
@@ -15,7 +15,7 @@ TARGET_SCHEMA = """
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(100) NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT '2024-01-01 00:00:00',
     email VARCHAR(255) DEFAULT NULL,
     is_active BOOLEAN DEFAULT TRUE
 );

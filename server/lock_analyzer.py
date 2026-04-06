@@ -91,12 +91,15 @@ def analyze_lock(sql: str) -> LockProfile:
     try:
         statements = sqlglot.parse(sql, dialect="postgres")
     except Exception:
-        return LockProfile("NONE", 0, 0.0, False)
+        return LockProfile("UNKNOWN", 1, 0.5, False)
 
     if not statements:
-        return LockProfile("NONE", 0, 0.0, False)
+        return LockProfile("UNKNOWN", 1, 0.5, False)
 
     profile = LockProfile("NONE", 0, 0.0, False)
     for statement in statements:
-        profile = _combine_profiles(profile, _analyze_statement(statement, statement.sql()))
+        statement_profile = _analyze_statement(statement, statement.sql())
+        if statement_profile.lock_type == "NONE" and not isinstance(statement, exp.Select):
+            return LockProfile("UNKNOWN", 1, 0.5, False)
+        profile = _combine_profiles(profile, statement_profile)
     return profile

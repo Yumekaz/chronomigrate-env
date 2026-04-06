@@ -27,7 +27,7 @@ ChronoMigrate turns that problem into a deterministic evaluation environment wit
 - multiplicative scoring from schema match, availability, and data integrity
 - PostgreSQL-first execution with SQLite fallback
 - Docker-ready deployment for Hugging Face Spaces
-- baseline inference through `inference.py` with configurable model backends
+   - baseline inference through root-level `inference.py`
 
 ## Action Space
 
@@ -61,7 +61,7 @@ ChronoMigrate turns that problem into a deterministic evaluation environment wit
 | `medium_rename_fk` | Medium | 10 | Rename a primary key column and repair foreign key references |
 | `hard_repartition` | Hard | 20 | Repartition a large table under simulated load |
 
-## Scoring Model
+## Reward Function
 
 Each step is rewarded with a multiplicative objective:
 
@@ -79,7 +79,7 @@ This makes destructive shortcuts unattractive. An agent that drops data or cause
 
 ## Baseline Scores
 
-The baseline entrypoint is the root-level `inference.py` script. By default it uses the OpenAI client, and it can also target other OpenAI-compatible endpoints through environment variables.
+The baseline entrypoint is the root-level `inference.py` script. It uses the OpenAI client for all model calls and reads `HF_TOKEN` or `OPENAI_API_KEY`, `API_BASE_URL`, and `MODEL_NAME` from the environment.
 
 Observed `gpt-4o-mini` scores after removing scripted fallback logic:
 
@@ -130,22 +130,28 @@ openenv validate --url http://127.0.0.1:7860
 
 Core runtime endpoints:
 
+- `GET /health`
+- `GET /metadata`
+- `GET /schema`
+- `GET /tasks`
 - `POST /reset`
 - `POST /step`
 - `GET /state`
-- `GET /tasks`
 - `POST /grader`
 - `POST /baseline`
-- `GET /health`
-- `GET /schema`
-- `GET /metadata`
 
-Example:
+Examples:
 
 ```bash
-curl -X POST http://127.0.0.1:7860/reset ^
-  -H "Content-Type: application/json" ^
-  -d "{\"task_id\":\"easy_add_column\",\"seed\":42}"
+curl http://127.0.0.1:7860/health
+curl http://127.0.0.1:7860/metadata
+curl http://127.0.0.1:7860/schema
+curl http://127.0.0.1:7860/tasks
+curl -X POST http://127.0.0.1:7860/reset -H "Content-Type: application/json" -d "{\"task_id\":\"easy_add_column\",\"seed\":42}"
+curl -X POST http://127.0.0.1:7860/step -H "Content-Type: application/json" -d "{\"sql\":\"ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;\",\"task_id\":\"easy_add_column\",\"execute_mode\":\"transaction\"}"
+curl http://127.0.0.1:7860/state
+curl -X POST http://127.0.0.1:7860/grader -H "Content-Type: application/json" -d "{\"task_id\":\"easy_add_column\"}"
+curl -X POST http://127.0.0.1:7860/baseline
 ```
 
 ### Client Usage
@@ -169,10 +175,12 @@ async with ChronoMigrateClient(base_url="http://127.0.0.1:7860") as env:
 
 Set these environment variables before running the baseline script:
 
-- `OPENAI_API_KEY` or `HF_TOKEN` or `API_KEY`
+- `HF_TOKEN` or `OPENAI_API_KEY`
 - `API_BASE_URL` (defaults to `https://api.openai.com/v1`)
 - `MODEL_NAME` (defaults to `gpt-4o-mini`)
 - `ENV_BASE_URL` (defaults to `http://localhost:7860`)
+
+The script is intended to be deterministic when run with the same environment variables and seed values.
 
 Run:
 

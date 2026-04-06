@@ -10,7 +10,7 @@ RUN useradd -m -u 1000 user
 
 WORKDIR /home/user/app
 
-COPY requirements.txt .
+COPY requirements.txt pyproject.toml ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=user:user . .
@@ -25,4 +25,4 @@ RUN chmod +x /home/user/app/scripts/init_db.sh
 
 EXPOSE 7860
 
-CMD ["bash", "/home/user/app/scripts/init_db.sh"]
+CMD ["/home/user/app/scripts/init_db.sh"]

@@ -1,5 +1,6 @@
 import sqlite3
 import shutil
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -51,7 +52,7 @@ def test_schema_match_is_perfect_for_identical_ddl():
     CREATE TABLE users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMP DEFAULT '2024-01-01 00:00:00'
     );
     """
     assert compute_schema_match(ddl, ddl) == 1.0
@@ -62,7 +63,7 @@ def test_schema_match_penalizes_unexpected_extra_columns():
     CREATE TABLE users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMP DEFAULT '2024-01-01 00:00:00',
         email VARCHAR(255) DEFAULT NULL,
         is_active BOOLEAN DEFAULT TRUE,
         debug_notes TEXT
@@ -72,7 +73,7 @@ def test_schema_match_penalizes_unexpected_extra_columns():
     CREATE TABLE users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMP DEFAULT '2024-01-01 00:00:00',
         email VARCHAR(255) DEFAULT NULL,
         is_active BOOLEAN DEFAULT TRUE
     );
@@ -219,7 +220,7 @@ def test_create_app_factory_returns_fastapi_app():
     health = client.get("/health")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    assert health.json() == {"status": "healthy"}
 
 
 def test_create_fastapi_app_factory_returns_fastapi_app():
@@ -228,7 +229,7 @@ def test_create_fastapi_app_factory_returns_fastapi_app():
     health = client.get("/health")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    assert health.json() == {"status": "healthy"}
 
 
 def test_state_endpoint_returns_active_episode():
@@ -251,6 +252,30 @@ def test_grader_returns_bounded_score_for_completed_episode():
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
     assert 0.0 <= result["score"] <= 1.0
     assert 0.0 <= result["availability"] <= 1.0
+
+
+def test_grader_uses_task_specific_grade_function(monkeypatch):
+    original_task = TASKS["easy_add_column"]
+
+    def fake_grade_fn(**kwargs):
+        assert kwargs["steps_used"] == 1
+        assert kwargs["action_history"]
+        return 0.4321
+
+    monkeypatch.setitem(
+        TASKS, "easy_add_column", replace(original_task, grade_fn=fake_grade_fn)
+    )
+
+    app_env.reset({"task_id": "easy_add_column", "seed": 42})
+    app_env.step(
+        MigrationAction(
+            sql="ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;",
+            task_id="easy_add_column",
+        )
+    )
+
+    result = grade_episode(GraderRequest(task_id="easy_add_column"))
+    assert result["score"] == 0.4321
 
 
 def test_reset_rejects_unknown_task():

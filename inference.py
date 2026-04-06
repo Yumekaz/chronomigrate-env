@@ -64,40 +64,7 @@ def _get_client() -> OpenAI:
     return OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 
-def _use_native_ollama_qwen() -> bool:
-    return "qwen" in MODEL_NAME.lower() and "11434" in API_BASE_URL
-
-
-def _ollama_chat_url() -> str:
-    if API_BASE_URL.endswith("/v1"):
-        return API_BASE_URL[: -len("/v1")] + "/api/chat"
-    return API_BASE_URL.rstrip("/") + "/api/chat"
-
-
-def _generate_sql(client: OpenAI | None, messages: List[Dict[str, str]], seed: int) -> str:
-    if _use_native_ollama_qwen():
-        response = requests.post(
-            _ollama_chat_url(),
-            json={
-                "model": MODEL_NAME,
-                "messages": messages,
-                "stream": False,
-                "think": False,
-                "options": {
-                    "temperature": 0,
-                    "seed": seed,
-                    "num_predict": 200,
-                },
-            },
-            timeout=240,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        return _normalize_sql(payload.get("message", {}).get("content", ""))
-
-    if client is None:
-        raise RuntimeError("LLM client is not configured.")
-
+def _generate_sql(client: OpenAI, messages: List[Dict[str, str]], seed: int) -> str:
     for attempt in range(OPENAI_RETRY_ATTEMPTS):
         try:
             completion = client.chat.completions.create(
@@ -191,7 +158,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     observation = reset_response.json()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     history: List[Dict[str, str]] = []
-    client = None if _use_native_ollama_qwen() else _get_client()
+    client = _get_client()
     attempt_budget = MAX_STEPS * 3
     attempts = 0
 

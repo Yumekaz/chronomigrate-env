@@ -3,7 +3,14 @@ set -euo pipefail
 
 export PGDATA=/home/user/pgdata
 export PGPORT=5433
-export PATH=/usr/lib/postgresql/17/bin:$PATH
+
+# Prefer the PostgreSQL 15 toolchain described in the build bible, but keep a
+# fallback to the image's installed version so local builds still work.
+if [ -d "/usr/lib/postgresql/15/bin" ]; then
+  export PATH=/usr/lib/postgresql/15/bin:$PATH
+elif [ -d "/usr/lib/postgresql/17/bin" ]; then
+  export PATH=/usr/lib/postgresql/17/bin:$PATH
+fi
 
 echo "Attempting PostgreSQL user-space initialization..."
 

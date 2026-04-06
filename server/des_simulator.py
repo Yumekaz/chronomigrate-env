@@ -16,8 +16,12 @@ class DiscreteEventSimulator:
         self.seed = seed
         self.tick_counter = 0
 
+    def _step_seed(self) -> int:
+        # Keep the simulator deterministic with the V2/V3 seed schedule.
+        return self.seed + self.tick_counter * 31337
+
     def simulate_step(self, lock_ticks: int, failure_rate: float) -> DESResult:
-        rng = random.Random(self.seed + self.tick_counter * 31337 + lock_ticks * 101)
+        rng = random.Random(self._step_seed())
         total = self.queries_per_tick * max(1, lock_ticks)
         failed = sum(1 for _ in range(total) if rng.random() < failure_rate)
         self.tick_counter += 1
