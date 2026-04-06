@@ -66,6 +66,13 @@ Return only SQL. No explanation. End with a semicolon.
 """.strip()
 
 
+def _emit_structured_log(tag: str, payload: Dict[str, object]) -> None:
+    print(
+        f"[{tag}] {json.dumps(payload, separators=(',', ':'), ensure_ascii=True)}",
+        flush=True,
+    )
+
+
 def _get_client() -> OpenAI:
     if not API_KEY:
         raise RuntimeError("HF_TOKEN, API_KEY, or OPENAI_API_KEY is required.")
@@ -182,6 +189,14 @@ def _repeats_failed_sql(sql: str, history: List[Dict[str, str]]) -> bool:
 
 
 def run_episode(task_id: str, seed: int = 42) -> float:
+    _emit_structured_log(
+        "START",
+        {
+            "task_id": task_id,
+            "seed": seed,
+            "model": MODEL_NAME,
+        },
+    )
     reset_response = _env_post("/reset", {"task_id": task_id, "seed": seed})
     observation = reset_response.json()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -255,11 +270,33 @@ def run_episode(task_id: str, seed: int = 42) -> float:
                 "schema_match": str(observation.get("schema_match_pct", 0.0)),
             }
         )
+        _emit_structured_log(
+            "STEP",
+            {
+                "task_id": task_id,
+                "step": int(observation.get("step_count", 0)),
+                "sql": sql,
+                "result": str(observation.get("last_sql_result", "")),
+                "schema_match_pct": round(
+                    float(observation.get("schema_match_pct", 0.0)), 4
+                ),
+                "downtime_pct": round(float(observation.get("downtime_pct", 0.0)), 4),
+                "done": bool(payload.get("done", False)),
+            },
+        )
         if payload.get("done", False):
             break
 
     grader_response = _env_post("/grader", {"task_id": task_id})
-    return float(grader_response.json().get("score", 0.0))
+    score = float(grader_response.json().get("score", 0.0))
+    _emit_structured_log(
+        "END",
+        {
+            "task_id": task_id,
+            "score": round(score, 4),
+        },
+    )
+    return score
 
 
 def main() -> None:
@@ -273,7 +310,6 @@ def main() -> None:
         for task_id in ["easy_add_column", "medium_rename_fk", "hard_repartition"]:
             score = run_episode(task_id, seed=42)
             results[task_id] = score
-            print(f"{task_id}: {score:.4f}", flush=True)
         print(json.dumps(results))
     else:
         print(json.dumps({args.task: run_episode(args.task, seed=42)}))

@@ -16,6 +16,7 @@ from inference import (
 from models import MigrationAction
 from server.app import (
     GraderRequest,
+    _parse_subprocess_json,
     _generate_feedback,
     app,
     create_app,
@@ -387,9 +388,9 @@ def test_baseline_endpoint_returns_script_scores(monkeypatch):
         return SimpleNamespace(
             returncode=0,
             stdout=(
-                "easy_add_column: 1.0000\n"
-                "medium_rename_fk: 0.6731\n"
-                "hard_repartition: 0.2440\n"
+                '[START] {"task_id":"easy_add_column","seed":42,"model":"gpt-4o-mini"}\n'
+                '[STEP] {"task_id":"easy_add_column","step":1,"sql":"ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;","result":"SUCCESS","schema_match_pct":0.8333,"downtime_pct":0.0,"done":false}\n'
+                '[END] {"task_id":"easy_add_column","score":1.0}\n'
                 '{"easy_add_column": 1.0, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}'
             ),
         )
@@ -426,6 +427,23 @@ def test_baseline_endpoint_surfaces_script_error(monkeypatch):
     assert payload["baseline_scores"] == {}
     assert payload["error"] == "HF_TOKEN, API_KEY, or OPENAI_API_KEY is required."
     assert payload["returncode"] == 1
+
+
+def test_parse_subprocess_json_ignores_structured_logs():
+    stdout = "\n".join(
+        [
+            '[START] {"task_id":"easy_add_column","seed":42,"model":"gpt-4o-mini"}',
+            '[STEP] {"task_id":"easy_add_column","step":1,"sql":"ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;","result":"SUCCESS","schema_match_pct":0.8333,"downtime_pct":0.0,"done":false}',
+            '[END] {"task_id":"easy_add_column","score":1.0}',
+            '{"easy_add_column": 1.0, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}',
+        ]
+    )
+
+    assert _parse_subprocess_json(stdout) == {
+        "easy_add_column": 1.0,
+        "medium_rename_fk": 0.6731,
+        "hard_repartition": 0.244,
+    }
 
 
 def test_run_episode_passes_seed_to_model_requests(monkeypatch):
