@@ -6,11 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from inference import (
-    _generic_safe_fallback,
     _is_obviously_unsafe_sql,
-    _recommended_step,
+    _normalize_sql,
     _repeats_failed_sql,
-    _select_sql,
+    _task_guidance,
     run_episode,
 )
 from models import MigrationAction
@@ -220,7 +219,7 @@ def test_create_app_factory_returns_fastapi_app():
     health = client.get("/health")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "healthy"}
+    assert health.json() == {"status": "ok"}
 
 
 def test_create_fastapi_app_factory_returns_fastapi_app():
@@ -229,7 +228,7 @@ def test_create_fastapi_app_factory_returns_fastapi_app():
     health = client.get("/health")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "healthy"}
+    assert health.json() == {"status": "ok"}
 
 
 def test_state_endpoint_returns_active_episode():
@@ -482,166 +481,16 @@ def test_run_episode_passes_seed_to_model_requests(monkeypatch):
     assert create_calls[0]["temperature"] == 0.0
 
 
-def test_baseline_recommended_step_handles_easy_in_single_statement():
-    observation = {"current_schema_ddl": TASKS["easy_add_column"].starting_schema_sql}
-
-    sql = _recommended_step("easy_add_column", observation, [])
-
-    assert sql == (
-        "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL, "
-        "ADD COLUMN is_active BOOLEAN DEFAULT TRUE;"
-    )
+def test_normalize_sql_strips_code_fences_and_appends_semicolon():
+    sql = "```sql\nALTER TABLE users ADD COLUMN email TEXT\n```"
+    assert _normalize_sql(sql) == "ALTER TABLE users ADD COLUMN email TEXT;"
 
 
-def test_baseline_recommended_step_handles_medium_fk_sequence():
-    starting = {"current_schema_ddl": TASKS["medium_rename_fk"].starting_schema_sql}
-    after_drop = {
-        "current_schema_ddl": TASKS["medium_rename_fk"].starting_schema_sql.replace(
-            "CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(id)", ""
-        )
-    }
-    after_rename = {
-        "current_schema_ddl": TASKS["medium_rename_fk"].target_schema_ddl.replace(
-            "CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(user_id)",
-            "",
-        )
-    }
-
-    first = _recommended_step("medium_rename_fk", starting, [])
-    second = _recommended_step("medium_rename_fk", after_drop, [first])
-    third = _recommended_step("medium_rename_fk", after_rename, [first, second])
-
-    assert first == "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;"
-    assert second == "ALTER TABLE users RENAME COLUMN id TO user_id;"
-    assert third == (
-        "ALTER TABLE orders ADD CONSTRAINT fk_orders_users "
-        "FOREIGN KEY (user_id) REFERENCES users(user_id);"
-    )
-
-
-def test_baseline_generic_fallback_recommends_hard_safe_sequence():
-    partition_steps = [
-        "CREATE TABLE events_new (LIKE events INCLUDING ALL) PARTITION BY HASH (user_id);",
-        "CREATE TABLE events_new_p0 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 0);",
-        "CREATE TABLE events_new_p1 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 1);",
-        "CREATE TABLE events_new_p2 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 2);",
-        "CREATE TABLE events_new_p3 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 3);",
-        "CREATE TABLE events_new_p4 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 4);",
-        "CREATE TABLE events_new_p5 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 5);",
-        "CREATE TABLE events_new_p6 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 6);",
-        "CREATE TABLE events_new_p7 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 7);",
-    ]
-    starting_observation = {
-        "current_schema_ddl": TASKS["hard_repartition"].starting_schema_sql,
-        "target_schema_ddl": TASKS["hard_repartition"].target_schema_ddl,
-    }
-    after_create_observation = {
-        "current_schema_ddl": "\n\n".join(
-            [TASKS["hard_repartition"].starting_schema_sql, *partition_steps[:3]]
-        ),
-        "target_schema_ddl": TASKS["hard_repartition"].target_schema_ddl,
-    }
-    after_partitions_observation = {
-        "current_schema_ddl": "\n\n".join(
-            [TASKS["hard_repartition"].starting_schema_sql, *partition_steps]
-        ),
-        "target_schema_ddl": TASKS["hard_repartition"].target_schema_ddl,
-    }
-
-    next_create = _generic_safe_fallback(starting_observation, [])
-    next_partition = _generic_safe_fallback(
-        after_create_observation,
-        [
-            {
-                "sql": partition_steps[0],
-                "result": "SUCCESS",
-                "schema_match": "0.4",
-            },
-            {
-                "sql": partition_steps[1],
-                "result": "SUCCESS",
-                "schema_match": "0.45",
-            },
-            {
-                "sql": partition_steps[2],
-                "result": "SUCCESS",
-                "schema_match": "0.5",
-            },
-        ],
-    )
-    next_backfill = _generic_safe_fallback(
-        after_partitions_observation,
-        [
-            {
-                "sql": partition_steps[0],
-                "result": "SUCCESS",
-                "schema_match": "0.4",
-            },
-            {
-                "sql": partition_steps[1],
-                "result": "SUCCESS",
-                "schema_match": "0.45",
-            },
-            {
-                "sql": partition_steps[2],
-                "result": "SUCCESS",
-                "schema_match": "0.5",
-            },
-            {
-                "sql": partition_steps[3],
-                "result": "SUCCESS",
-                "schema_match": "0.55",
-            },
-            {
-                "sql": partition_steps[4],
-                "result": "SUCCESS",
-                "schema_match": "0.6",
-            },
-            {
-                "sql": partition_steps[5],
-                "result": "SUCCESS",
-                "schema_match": "0.65",
-            },
-            {
-                "sql": partition_steps[6],
-                "result": "SUCCESS",
-                "schema_match": "0.7",
-            },
-            {
-                "sql": partition_steps[7],
-                "result": "SUCCESS",
-                "schema_match": "0.75",
-            },
-            {
-                "sql": partition_steps[8],
-                "result": "SUCCESS",
-                "schema_match": "0.8",
-            },
-        ],
-    )
-
-    assert next_create is not None
-    assert next_create.startswith("CREATE TABLE events_new")
-    assert "PARTITION BY HASH (user_id);" in next_create
-    assert next_partition == (
-        "CREATE TABLE events_new_p2 PARTITION OF events_new "
-        "FOR VALUES WITH (MODULUS 8, REMAINDER 2);"
-    )
-    assert next_backfill == "INSERT INTO events_new SELECT * FROM events;"
-
-
-def test_baseline_select_sql_prefers_safe_recommended_step():
-    recommended = "ALTER TABLE orders DROP CONSTRAINT fk_orders_users;"
-
-    unsafe = _select_sql("medium_rename_fk", "DROP TABLE users;", recommended)
-    off_sequence = _select_sql(
-        "medium_rename_fk",
-        "ALTER TABLE users RENAME COLUMN id TO user_id;",
-        recommended,
-    )
-
-    assert unsafe == recommended
-    assert off_sequence == recommended
+def test_task_guidance_describes_safe_hard_strategy():
+    guidance = _task_guidance("hard_repartition")
+    assert "create-copy-swap" in guidance
+    assert "all eight hash partitions" in guidance
+    assert "events_old" in guidance
 
 
 def test_baseline_marks_destructive_sql_as_unsafe():
@@ -661,6 +510,95 @@ def test_baseline_detects_repeated_failed_sql():
 
     assert _repeats_failed_sql("ALTER TABLE users RENAME COLUMN id TO user_id;", history) is True
     assert _repeats_failed_sql("ALTER TABLE orders DROP CONSTRAINT fk_orders_users;", history) is False
+
+
+def test_run_episode_retries_once_after_unsafe_sql(monkeypatch):
+    create_calls = []
+    step_calls = []
+    responses = iter(
+        [
+            "DROP TABLE users;",
+            "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;",
+        ]
+    )
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            create_calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=next(responses)))]
+            )
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    def fake_post(url, json=None, timeout=30):
+        if url.endswith("/reset"):
+            return FakeResponse(
+                {
+                    "current_schema_ddl": TASKS["easy_add_column"].starting_schema_sql,
+                    "target_schema_ddl": TASKS["easy_add_column"].target_schema_ddl,
+                    "last_sql_result": "RESET",
+                    "downtime_pct": 0.0,
+                    "step_count": 0,
+                    "cumulative_downtime_pct": 0.0,
+                    "task_id": "easy_add_column",
+                    "schema_match_pct": 0.0,
+                    "episode_id": "episode-1",
+                    "done": False,
+                }
+            )
+        if url.endswith("/step"):
+            step_calls.append(json)
+            return FakeResponse(
+                {
+                    "observation": {
+                        "current_schema_ddl": TASKS["easy_add_column"].target_schema_ddl,
+                        "target_schema_ddl": TASKS["easy_add_column"].target_schema_ddl,
+                        "last_sql_result": "SUCCESS",
+                        "downtime_pct": 0.0,
+                        "step_count": 1,
+                        "cumulative_downtime_pct": 0.0,
+                        "task_id": "easy_add_column",
+                        "schema_match_pct": 1.0,
+                        "episode_id": "episode-1",
+                        "done": True,
+                    },
+                    "done": True,
+                    "reward": 1.0,
+                    "metadata": {},
+                }
+            )
+        if url.endswith("/grader"):
+            return FakeResponse({"score": 1.0})
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr("inference.API_KEY", "test-key")
+    monkeypatch.setattr("inference._get_client", lambda: FakeClient())
+    monkeypatch.setattr("inference.requests.post", fake_post)
+
+    score = run_episode("easy_add_column", seed=42)
+
+    assert score == 1.0
+    assert len(create_calls) == 2
+    assert step_calls == [
+        {
+            "sql": "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;",
+            "task_id": "easy_add_column",
+            "execute_mode": "transaction",
+        }
+    ]
 
 
 def test_execute_mode_transaction_rolls_back_on_error():

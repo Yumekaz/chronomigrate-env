@@ -48,7 +48,7 @@ class GraderRequest(BaseModel):
 
 
 def health() -> Dict[str, str]:
-    return {"status": "healthy"}
+    return {"status": "ok"}
 
 
 def metadata() -> Dict[str, object]:
@@ -303,6 +303,18 @@ def _register_common_routes(fastapi_app: FastAPI) -> None:
     fastapi_app.post("/baseline")(run_baseline)
 
 
+def _replace_get_route(fastapi_app: FastAPI, path: str, endpoint) -> None:
+    fastapi_app.router.routes = [
+        route
+        for route in fastapi_app.router.routes
+        if not (
+            getattr(route, "path", None) == path
+            and "GET" in (getattr(route, "methods", None) or set())
+        )
+    ]
+    fastapi_app.get(path)(endpoint)
+
+
 def create_fastapi_app() -> FastAPI:
     if create_openenv_fastapi_app is not None:
         try:
@@ -324,6 +336,7 @@ def create_fastapi_app() -> FastAPI:
         )
         _register_fallback_core_routes(fastapi_app)
 
+    _replace_get_route(fastapi_app, "/health", health)
     _register_common_routes(fastapi_app)
     return fastapi_app
 

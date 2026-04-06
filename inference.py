@@ -3,10 +3,11 @@ import json
 import os
 import re
 import sys
+import time
 from typing import Dict, List
 
 import requests
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
 
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
@@ -18,6 +19,7 @@ API_KEY = (
 )
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 MAX_STEPS = 20
+OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "4"))
 
 SYSTEM_PROMPT = """
 You are interacting with a database migration environment over repeated turns.
@@ -96,14 +98,33 @@ def _generate_sql(client: OpenAI | None, messages: List[Dict[str, str]], seed: i
     if client is None:
         raise RuntimeError("LLM client is not configured.")
 
-    completion = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=messages,
-        temperature=0.0,
-        seed=seed,
-        max_tokens=200,
-    )
-    return _normalize_sql(completion.choices[0].message.content or "")
+    for attempt in range(OPENAI_RETRY_ATTEMPTS):
+        try:
+            completion = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=messages,
+                temperature=0.0,
+                seed=seed,
+                max_tokens=200,
+            )
+            return _normalize_sql(completion.choices[0].message.content or "")
+        except (RateLimitError, APIConnectionError, APITimeoutError) as exc:
+            if attempt == OPENAI_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_retry_delay_seconds(exc, attempt))
+
+    raise RuntimeError("OpenAI request retry loop exited unexpectedly.")
+
+
+def _retry_delay_seconds(exc: Exception, attempt: int) -> float:
+    message = str(exc)
+    match = re.search(r"Please try again in ([0-9.]+)(ms|s)", message, re.IGNORECASE)
+    if match:
+        value = float(match.group(1))
+        unit = match.group(2).lower()
+        delay = value / 1000.0 if unit == "ms" else value
+        return max(1.0, min(10.0, delay + 0.5))
+    return min(10.0, 2.0 * (attempt + 1))
 
 
 def _task_guidance(task_id: str) -> str:

@@ -8,5 +8,7 @@ uvicorn.out.log
 ChronoMigrate_Build_Bible*.docx
 rules and guidelines.docx
 .codex-tmp-*.log
+.codex-*.log
+.codex-*.py
 run1.txt
 run2.txt
