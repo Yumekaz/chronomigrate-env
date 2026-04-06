@@ -7,10 +7,11 @@ import time
 from typing import Dict, List
 
 import requests
+from requests import exceptions as requests_exceptions
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
 
-BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
+BASE_URL = os.environ.get("ENV_BASE_URL", "http://127.0.0.1:7860")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 API_KEY = (
     os.getenv("HF_TOKEN")
@@ -20,6 +21,13 @@ API_KEY = (
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 MAX_STEPS = 20
 OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "4"))
+ENV_REQUEST_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv("ENV_REQUEST_CONNECT_TIMEOUT_SECONDS", "5")
+)
+ENV_REQUEST_READ_TIMEOUT_SECONDS = float(
+    os.getenv("ENV_REQUEST_READ_TIMEOUT_SECONDS", "90")
+)
+ENV_REQUEST_RETRY_ATTEMPTS = int(os.getenv("ENV_REQUEST_RETRY_ATTEMPTS", "2"))
 
 SYSTEM_PROMPT = """
 You are interacting with a database migration environment over repeated turns.
@@ -94,6 +102,31 @@ def _retry_delay_seconds(exc: Exception, attempt: int) -> float:
     return min(10.0, 2.0 * (attempt + 1))
 
 
+def _env_post(path: str, payload: Dict[str, object], timeout: tuple[float, float] | None = None):
+    timeout = timeout or (
+        ENV_REQUEST_CONNECT_TIMEOUT_SECONDS,
+        ENV_REQUEST_READ_TIMEOUT_SECONDS,
+    )
+    last_exc: Exception | None = None
+    for attempt in range(ENV_REQUEST_RETRY_ATTEMPTS):
+        try:
+            response = requests.post(
+                f"{BASE_URL}{path}",
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response
+        except (requests_exceptions.ConnectionError, requests_exceptions.ReadTimeout) as exc:
+            last_exc = exc
+            if attempt == ENV_REQUEST_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(min(5.0, attempt + 1))
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"Unexpected env request failure for {path}")
+
+
 def _task_guidance(task_id: str) -> str:
     if task_id == "easy_add_column":
         return (
@@ -149,12 +182,7 @@ def _repeats_failed_sql(sql: str, history: List[Dict[str, str]]) -> bool:
 
 
 def run_episode(task_id: str, seed: int = 42) -> float:
-    reset_response = requests.post(
-        f"{BASE_URL}/reset",
-        json={"task_id": task_id, "seed": seed},
-        timeout=30,
-    )
-    reset_response.raise_for_status()
+    reset_response = _env_post("/reset", {"task_id": task_id, "seed": seed})
     observation = reset_response.json()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     history: List[Dict[str, str]] = []
@@ -214,12 +242,10 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             )
             continue
 
-        step_response = requests.post(
-            f"{BASE_URL}/step",
-            json={"sql": sql, "task_id": task_id, "execute_mode": "transaction"},
-            timeout=30,
+        step_response = _env_post(
+            "/step",
+            {"sql": sql, "task_id": task_id, "execute_mode": "transaction"},
         )
-        step_response.raise_for_status()
         payload = step_response.json()
         observation = payload.get("observation", {})
         history.append(
@@ -232,10 +258,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
         if payload.get("done", False):
             break
 
-    grader_response = requests.post(
-        f"{BASE_URL}/grader", json={"task_id": task_id}, timeout=30
-    )
-    grader_response.raise_for_status()
+    grader_response = _env_post("/grader", {"task_id": task_id})
     return float(grader_response.json().get("score", 0.0))
 
 

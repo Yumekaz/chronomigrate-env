@@ -178,7 +178,7 @@ Set these environment variables before running the baseline script:
 - `HF_TOKEN` or `OPENAI_API_KEY`
 - `API_BASE_URL` (defaults to `https://api.openai.com/v1`)
 - `MODEL_NAME` (defaults to `gpt-4o-mini`)
-- `ENV_BASE_URL` (defaults to `http://localhost:7860`)
+- `ENV_BASE_URL` (defaults to `http://127.0.0.1:7860`)
 
 The script is intended to be deterministic when run with the same environment variables and seed values.
 
