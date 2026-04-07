@@ -23,6 +23,9 @@ def coerce_grader_inputs(*args: object, **kwargs: object) -> Tuple[Dict[str, obj
         first = args[0]
         if isinstance(first, dict):
             payload.update(first)
+        elif len(args) >= len(GRADER_REQUIRED_KEYS):
+            for key, value in zip(GRADER_REQUIRED_KEYS, args):
+                payload[key] = value
         else:
             for key in GRADER_REQUIRED_KEYS:
                 if hasattr(first, key):

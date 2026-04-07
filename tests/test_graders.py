@@ -944,6 +944,24 @@ def test_manifest_graders_accept_dict_payloads():
         assert grader.grade(payload) == normalize_task_score(1.0)
 
 
+def test_manifest_graders_accept_positional_payloads():
+    from server.tasks.task_easy import EasyGrader
+    from server.tasks.task_hard import HardGrader
+    from server.tasks.task_medium import MediumGrader
+
+    args = (
+        "CREATE TABLE t (id INT);",
+        "CREATE TABLE t (id INT);",
+        "same",
+        "same",
+        1.0,
+    )
+
+    for grader_cls in (EasyGrader, MediumGrader, HardGrader):
+        grader = grader_cls()
+        assert grader.grade(*args) == normalize_task_score(1.0)
+
+
 def test_sqlite_hard_safe_pattern_supports_like_and_partition_children():
     task = TASKS["hard_repartition"]
     db = DBManager()
