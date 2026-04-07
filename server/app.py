@@ -16,7 +16,7 @@ except Exception:
 
 from models import MigrationAction, MigrationObservation, MigrationState
 from server.chrono_migrate_env import ChronoMigrateEnv
-from server.tasks import TASKS
+from server.tasks import TASKS, normalize_task_score
 
 ENV_NAME = "chronomigrate-env"
 ENV_VERSION = "0.1.0"
@@ -286,7 +286,7 @@ def grade_episode(req: GraderRequest) -> Dict:
         action_history=snapshot["action_history"],
         steps_used=current_state.step_count,
     )
-    score = max(0.0, min(1.0, raw_score))
+    score = normalize_task_score(raw_score)
     return {
         "score": round(score, 4),
         "schema_match": round(current_state.schema_match_pct, 4),

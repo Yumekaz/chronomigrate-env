@@ -29,7 +29,7 @@ from server.app import (
 from server.chrono_migrate_env import ChronoMigrateEnv
 from server.db_manager import DBManager
 from server.schema_grader import compute_data_hash, compute_schema_match
-from server.tasks import TASKS
+from server.tasks import TASKS, normalize_task_score
 
 
 def test_schema_match_rewards_target_features():
@@ -252,7 +252,7 @@ def test_grader_returns_bounded_score_for_completed_episode():
         )
     )
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
-    assert 0.0 <= result["score"] <= 1.0
+    assert 0.0 < result["score"] < 1.0
     assert 0.0 <= result["availability"] <= 1.0
 
 
@@ -391,8 +391,8 @@ def test_baseline_endpoint_returns_script_scores(monkeypatch):
             stdout=(
                 '[START] {"task_id":"easy_add_column","seed":42,"model":"gpt-4o-mini"}\n'
                 '[STEP] {"task_id":"easy_add_column","step":1,"sql":"ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;","result":"SUCCESS","schema_match_pct":0.8333,"downtime_pct":0.0,"done":false}\n'
-                '[END] {"task_id":"easy_add_column","score":1.0}\n'
-                '{"easy_add_column": 1.0, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}'
+                '[END] {"task_id":"easy_add_column","score":0.9999}\n'
+                '{"easy_add_column": 0.9999, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}'
             ),
         )
 
@@ -404,7 +404,7 @@ def test_baseline_endpoint_returns_script_scores(monkeypatch):
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["baseline_scores"] == {
-        "easy_add_column": 1.0,
+        "easy_add_column": 0.9999,
         "medium_rename_fk": 0.6731,
         "hard_repartition": 0.244,
     }
@@ -435,13 +435,13 @@ def test_parse_subprocess_json_ignores_structured_logs():
         [
             '[START] {"task_id":"easy_add_column","seed":42,"model":"gpt-4o-mini"}',
             '[STEP] {"task_id":"easy_add_column","step":1,"sql":"ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;","result":"SUCCESS","schema_match_pct":0.8333,"downtime_pct":0.0,"done":false}',
-            '[END] {"task_id":"easy_add_column","score":1.0}',
-            '{"easy_add_column": 1.0, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}',
+            '[END] {"task_id":"easy_add_column","score":0.9999}',
+            '{"easy_add_column": 0.9999, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}',
         ]
     )
 
     assert _parse_subprocess_json(stdout) == {
-        "easy_add_column": 1.0,
+        "easy_add_column": 0.9999,
         "medium_rename_fk": 0.6731,
         "hard_repartition": 0.244,
     }
@@ -520,7 +520,7 @@ def test_run_episode_passes_seed_to_model_requests(monkeypatch):
 
     score = run_episode("medium_rename_fk", seed=42)
 
-    assert score == 1.0
+    assert score == normalize_task_score(1.0)
     assert create_calls
     assert create_calls[0]["seed"] == 42
     assert create_calls[0]["temperature"] == 0.0
@@ -534,11 +534,11 @@ def test_safe_run_episode_returns_zero_on_failure(monkeypatch, capsys):
 
     score = _safe_run_episode("easy_add_column", seed=42)
 
-    assert score == 0.0
+    assert score == normalize_task_score(0.0)
     stdout = capsys.readouterr().out
     assert "[END]" in stdout
     assert '"task_id":"easy_add_column"' in stdout
-    assert '"score":0.0' in stdout
+    assert f'"score":{normalize_task_score(0.0)}' in stdout
     assert '"error":"connection refused"' in stdout
 
 
@@ -652,7 +652,7 @@ def test_run_episode_retries_once_after_unsafe_sql(monkeypatch):
 
     score = run_episode("easy_add_column", seed=42)
 
-    assert score == 1.0
+    assert score == normalize_task_score(1.0)
     assert len(create_calls) == 2
     assert step_calls == [
         {
@@ -924,7 +924,7 @@ def test_drop_table_scores_zero_due_to_data_integrity_loss():
     )
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
 
-    assert result["score"] == 0.0
+    assert result["score"] == normalize_task_score(0.0)
 
 
 def test_hard_grader_preserves_multiplicative_zero_on_data_loss():
@@ -946,7 +946,7 @@ def test_hard_grader_preserves_multiplicative_zero_on_data_loss():
         steps_used=12,
     )
 
-    assert score == 0.0
+    assert score == normalize_task_score(0.0)
 
 
 def test_ten_sequential_easy_episodes_are_stable():

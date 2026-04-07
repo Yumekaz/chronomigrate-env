@@ -3,6 +3,11 @@ from typing import Callable, Dict
 
 
 GradeFunction = Callable[..., float]
+SCORE_EPSILON = 1e-4
+
+
+def normalize_task_score(score: float) -> float:
+    return max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, float(score)))
 
 
 @dataclass(frozen=True)

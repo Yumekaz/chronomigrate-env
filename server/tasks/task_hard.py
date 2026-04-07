@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta
 
-from server.tasks import TaskDefinition
+from server.tasks import TaskDefinition, normalize_task_score
 
 
 STARTING_SCHEMA = """
@@ -96,7 +96,7 @@ def grade_hard(
 
     schema_match = compute_schema_match(current_schema_ddl, target_schema_ddl)
     data_integrity = 1.0 if data_hash_before == data_hash_after else 0.0
-    return min(1.0, schema_match * data_integrity * availability_pct)
+    return normalize_task_score(schema_match * data_integrity * availability_pct)
 
 
 TASK = TaskDefinition(

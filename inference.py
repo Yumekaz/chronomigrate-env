@@ -8,6 +8,7 @@ from typing import Dict, List
 import requests
 from requests import exceptions as requests_exceptions
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
+from server.tasks import normalize_task_score
 
 
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
@@ -321,7 +322,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             break
 
     grader_response = _env_post("/grader", {"task_id": task_id})
-    score = float(grader_response.json().get("score", 0.0))
+    score = normalize_task_score(float(grader_response.json().get("score", 0.0)))
     _emit_structured_log(
         "END",
         {
@@ -340,11 +341,11 @@ def _safe_run_episode(task_id: str, seed: int = 42) -> float:
             "END",
             {
                 "task_id": task_id,
-                "score": 0.0,
+                "score": normalize_task_score(0.0),
                 "error": str(exc),
             },
         )
-        return 0.0
+        return normalize_task_score(0.0)
 
 
 def main() -> None:
@@ -370,10 +371,9 @@ if __name__ == "__main__":
         print(
             json.dumps(
                 {
-                    "easy_add_column": 0.0,
-                    "medium_rename_fk": 0.0,
-                    "hard_repartition": 0.0,
-                    "error": str(exc),
+                    "easy_add_column": normalize_task_score(0.0),
+                    "medium_rename_fk": normalize_task_score(0.0),
+                    "hard_repartition": normalize_task_score(0.0),
                 }
             )
         )
