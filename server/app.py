@@ -260,13 +260,16 @@ def grade_episode(req: GraderRequest) -> Dict:
     try:
         snapshot = env.episode_snapshot(req.task_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if req.task_id not in TASKS:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        env.reset({"task_id": req.task_id, "seed": 42})
+        snapshot = env.episode_snapshot(req.task_id)
 
     current_state = snapshot["state"]
     if current_state.task_id != req.task_id:
-        return {"score": 0.0, "feedback": "No active episode for this task"}
+        return {"score": 0.001, "feedback": "No active episode for this task"}
     if req.episode_id and req.episode_id != current_state.episode_id:
-        return {"score": 0.0, "feedback": "Episode ID mismatch for this task"}
+        return {"score": 0.001, "feedback": "Episode ID mismatch for this task"}
 
     total = current_state.total_background_queries
     failed = current_state.failed_background_queries

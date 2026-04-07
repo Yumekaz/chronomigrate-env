@@ -256,6 +256,16 @@ def test_grader_returns_bounded_score_for_completed_episode():
     assert 0.0 <= result["availability"] <= 1.0
 
 
+def test_grader_cold_start_returns_score_for_all_tasks():
+    client = TestClient(create_app())
+
+    for task_id in ["easy_add_column", "medium_rename_fk", "hard_repartition"]:
+        response = client.post("/grader", json={"task_id": task_id})
+        assert response.status_code == 200
+        payload = response.json()
+        assert 0.0 < payload["score"] < 1.0
+
+
 def test_grader_uses_task_specific_grade_function(monkeypatch):
     original_task = TASKS["easy_add_column"]
 
@@ -355,7 +365,7 @@ def test_grader_rejects_episode_id_mismatch():
     result = grade_episode(
         GraderRequest(task_id="easy_add_column", episode_id="wrong-episode-id")
     )
-    assert result["score"] == 0.0
+    assert result["score"] == 0.001
     assert "mismatch" in result["feedback"].lower()
 
 
@@ -924,7 +934,7 @@ def test_drop_table_scores_zero_due_to_data_integrity_loss():
     )
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
 
-    assert result["score"] == normalize_task_score(0.0)
+    assert result["score"] == 0.001
 
 
 def test_hard_grader_preserves_multiplicative_zero_on_data_loss():
