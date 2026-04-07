@@ -1,5 +1,6 @@
 import sqlite3
 import shutil
+import importlib
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -424,7 +425,7 @@ def test_baseline_endpoint_surfaces_script_error(monkeypatch):
     def fake_run(*args, **kwargs):
         return SimpleNamespace(
             returncode=1,
-            stdout='{"error": "HF_TOKEN, API_KEY, or OPENAI_API_KEY is required."}',
+            stdout='{"error": "API_KEY or OPENAI_API_KEY is required."}',
             stderr="",
         )
 
@@ -436,7 +437,7 @@ def test_baseline_endpoint_surfaces_script_error(monkeypatch):
     payload = response.json()
     assert payload["status"] == "error"
     assert payload["baseline_scores"] == {}
-    assert payload["error"] == "HF_TOKEN, API_KEY, or OPENAI_API_KEY is required."
+    assert payload["error"] == "API_KEY or OPENAI_API_KEY is required."
     assert payload["returncode"] == 1
 
 
@@ -534,6 +535,35 @@ def test_run_episode_passes_seed_to_model_requests(monkeypatch):
     assert create_calls
     assert create_calls[0]["seed"] == 42
     assert create_calls[0]["temperature"] == 0.0
+
+
+def test_inference_prefers_api_key_over_hf_token(monkeypatch):
+    import inference
+
+    captured = {}
+
+    def fake_openai(*, base_url, api_key):
+        captured["base_url"] = base_url
+        captured["api_key"] = api_key
+        return SimpleNamespace()
+
+    monkeypatch.setenv("API_BASE_URL", "https://litellm.example/v1")
+    monkeypatch.setenv("API_KEY", "litellm-key")
+    monkeypatch.setenv("HF_TOKEN", "hf-should-not-be-used")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-fallback")
+
+    reloaded = importlib.reload(inference)
+    monkeypatch.setattr(reloaded, "OpenAI", fake_openai)
+
+    client = reloaded._get_client()
+
+    assert isinstance(client, SimpleNamespace)
+    assert captured == {
+        "base_url": "https://litellm.example/v1",
+        "api_key": "litellm-key",
+    }
+
+    importlib.reload(inference)
 
 
 def test_safe_run_episode_returns_zero_on_failure(monkeypatch, capsys):

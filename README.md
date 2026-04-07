@@ -106,7 +106,7 @@ This makes destructive shortcuts unattractive. An agent that drops data or cause
 
 ## Baseline Scores
 
-The baseline entrypoint is the root-level `inference.py` script. It uses the OpenAI client for all model calls and reads `HF_TOKEN` or `OPENAI_API_KEY`, `API_BASE_URL`, and `MODEL_NAME` from the environment.
+The baseline entrypoint is the root-level `inference.py` script. It uses the OpenAI client for all model calls and reads `API_KEY`, `API_BASE_URL`, and `MODEL_NAME` from the environment. For local or Space-hosted testing outside the evaluator, `OPENAI_API_KEY` is also accepted as a fallback.
 
 Reference baseline configuration:
 
@@ -146,7 +146,7 @@ pip install -r requirements.txt
 
 Optional environment variables for the baseline:
 
-- `OPENAI_API_KEY` or `HF_TOKEN`
+- `API_KEY` or `OPENAI_API_KEY`
 - `MODEL_NAME` default: `gpt-4o-mini`
 - `API_BASE_URL` default: `https://api.openai.com/v1`
 - `ENV_BASE_URL` default: `http://127.0.0.1:7860`
@@ -229,7 +229,7 @@ async with ChronoMigrateClient(base_url="http://127.0.0.1:7860") as env:
 
 Set these environment variables before running the baseline script:
 
-- `HF_TOKEN` or `OPENAI_API_KEY`
+- `API_KEY` or `OPENAI_API_KEY`
 - `API_BASE_URL` (defaults to `https://api.openai.com/v1`)
 - `MODEL_NAME` (defaults to `gpt-4o-mini`)
 - `ENV_BASE_URL` (defaults to `http://127.0.0.1:7860`)
@@ -277,4 +277,3 @@ Important files:
 - `server/schema_grader.py`: deterministic schema comparison logic
 - `server/lock_analyzer.py`: SQL lock and downtime heuristics
 - `inference.py`: root-level baseline runner
-
