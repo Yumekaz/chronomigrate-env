@@ -224,17 +224,24 @@ def step(action: MigrationAction):
         observation = env.step(action)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    metadata = dict(env.last_metadata)
+    for key in ("availability", "data_integrity"):
+        if key in metadata:
+            metadata[key] = round(normalize_task_score(float(metadata[key])), 4)
     return {
         "observation": observation.model_dump(),
         "reward": observation.reward,
         "done": observation.done,
-        "metadata": env.last_metadata,
+        "metadata": metadata,
     }
 
 
 def state():
     try:
-        return env.state
+        payload = env.state.model_dump()
+        for key in ("reward", "cumulative_reward", "schema_match_pct"):
+            payload[key] = round(normalize_task_score(float(payload[key])), 4)
+        return payload
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

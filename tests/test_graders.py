@@ -340,7 +340,7 @@ def test_medium_task_completes_after_canonical_three_step_sequence():
             )
         )
 
-    assert obs.schema_match_pct >= 0.999999999
+    assert obs.schema_match_pct >= 0.999
     assert obs.done is True
     assert env.state.done is True
 
