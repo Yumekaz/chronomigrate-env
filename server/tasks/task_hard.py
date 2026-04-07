@@ -107,10 +107,17 @@ def hard_grader(*args: object, **kwargs: object) -> float:
 
 
 class HardGrader:
-    def grade(self, *args: object, **kwargs: object) -> float:
+    def __new__(cls, *args: object, **kwargs: object):
+        if args or kwargs:
+            return hard_grader(*args, **kwargs)
+        return super().__new__(cls)
+
+    @staticmethod
+    def grade(*args: object, **kwargs: object) -> float:
         return hard_grader(*args, **kwargs)
 
-    __call__ = grade
+    def __call__(self, *args: object, **kwargs: object) -> float:
+        return self.grade(*args, **kwargs)
 
 
 TASK = TaskDefinition(

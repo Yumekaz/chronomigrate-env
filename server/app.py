@@ -28,9 +28,9 @@ ENV_TAGS = [
     "schema-migration",
 ]
 TASK_GRADER_PATHS = {
-    "easy_add_column": "server.tasks.task_easy:easy_grader",
-    "medium_rename_fk": "server.tasks.task_medium:medium_grader",
-    "hard_repartition": "server.tasks.task_hard:hard_grader",
+    "easy_add_column": "server.tasks.task_easy:EasyGrader",
+    "medium_rename_fk": "server.tasks.task_medium:MediumGrader",
+    "hard_repartition": "server.tasks.task_hard:HardGrader",
 }
 
 class MCPRequest(BaseModel):
