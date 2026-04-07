@@ -162,6 +162,7 @@ def test_env_reset_and_step_updates_episode_state():
     assert obs.task_id == "easy_add_column"
     assert obs.step_count == 0
     assert obs.episode_id
+    assert 0.0 < obs.reward < 1.0
 
     step = env.step(
         MigrationAction(
@@ -172,7 +173,7 @@ def test_env_reset_and_step_updates_episode_state():
     assert step.step_count == 1
     assert "email" in step.current_schema_ddl.lower()
     assert 0.0 <= step.schema_match_pct <= 1.0
-    assert step.reward >= 0.0
+    assert 0.0 < step.reward < 1.0
     assert step.done is False
     assert env.state.cumulative_reward >= 0.0
 
@@ -313,7 +314,7 @@ def test_task_mismatch_is_penalized_gracefully():
     )
     assert "TASK_ID_MISMATCH" in obs.last_sql_result
     assert env.last_step_reward == -0.05
-    assert obs.reward == -0.05
+    assert obs.reward == 0.001
     assert env.state.step_count == 1
 
 
@@ -361,7 +362,7 @@ def test_unexpected_step_error_is_penalized_gracefully(monkeypatch):
     )
 
     assert "EXECUTION_ERROR" in obs.last_sql_result
-    assert obs.reward == -0.05
+    assert obs.reward == 0.001
     assert env.state.step_count == 1
     assert env.state.done is False
 
@@ -385,6 +386,7 @@ def test_reset_and_step_contract_through_http():
     reset = client.post("/reset", json={"task_id": "easy_add_column", "seed": 42})
     assert reset.status_code == 200
     assert reset.json()["task_id"] == "easy_add_column"
+    assert 0.0 < reset.json()["reward"] < 1.0
 
     step = client.post(
         "/step",
@@ -397,6 +399,8 @@ def test_reset_and_step_contract_through_http():
     assert step.status_code == 200
     body = step.json()
     assert body["observation"]["task_id"] == "easy_add_column"
+    assert 0.0 < body["reward"] < 1.0
+    assert 0.0 < body["observation"]["reward"] < 1.0
     assert "metadata" in body
 
 

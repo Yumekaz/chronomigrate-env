@@ -12,7 +12,7 @@ from server.db_manager import DBManager
 from server.des_simulator import DiscreteEventSimulator
 from server.lock_analyzer import analyze_lock
 from server.schema_grader import compute_data_hash, compute_schema_match
-from server.tasks import TASKS
+from server.tasks import TASKS, normalize_task_score
 
 
 SCHEMA_COMPLETE_TOLERANCE = 1e-9
@@ -173,6 +173,7 @@ class ChronoMigrateEnv(Environment):
             raise RuntimeError("Episode not initialized. Call reset() first.")
         total = state.total_background_queries
         failed = state.failed_background_queries
+        public_reward = normalize_task_score(reward)
         return MigrationObservation(
             current_schema_ddl=state.current_schema_ddl,
             target_schema_ddl=state.target_schema_ddl,
@@ -184,5 +185,5 @@ class ChronoMigrateEnv(Environment):
             schema_match_pct=state.schema_match_pct,
             episode_id=state.episode_id,
             done=state.done,
-            reward=reward,
+            reward=public_reward,
         )
