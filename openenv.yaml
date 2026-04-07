@@ -22,8 +22,8 @@ tags:
   - schema-migration
 tasks:
   - id: easy_add_column
-    grader: server.tasks.task_easy:EasyGrader
+    grader: server.tasks.task_easy:easy_grader
   - id: medium_rename_fk
-    grader: server.tasks.task_medium:MediumGrader
+    grader: server.tasks.task_medium:medium_grader
   - id: hard_repartition
-    grader: server.tasks.task_hard:HardGrader
+    grader: server.tasks.task_hard:hard_grader

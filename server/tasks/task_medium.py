@@ -98,12 +98,16 @@ def grade_medium(
     return normalize_task_score(schema_match * data_integrity * availability_pct)
 
 
+def medium_grader(*args: object, **kwargs: object) -> float:
+    payload, is_complete = coerce_grader_inputs(*args, **kwargs)
+    if not is_complete:
+        return normalize_task_score(0.0)
+    return grade_medium(**payload)
+
+
 class MediumGrader:
     def grade(self, *args: object, **kwargs: object) -> float:
-        payload, is_complete = coerce_grader_inputs(*args, **kwargs)
-        if not is_complete:
-            return normalize_task_score(0.0)
-        return grade_medium(**payload)
+        return medium_grader(*args, **kwargs)
 
     __call__ = grade
 

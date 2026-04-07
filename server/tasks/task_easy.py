@@ -60,12 +60,16 @@ def grade_easy(
     return normalize_task_score(schema_match * data_integrity * availability_pct)
 
 
+def easy_grader(*args: object, **kwargs: object) -> float:
+    payload, is_complete = coerce_grader_inputs(*args, **kwargs)
+    if not is_complete:
+        return normalize_task_score(0.0)
+    return grade_easy(**payload)
+
+
 class EasyGrader:
     def grade(self, *args: object, **kwargs: object) -> float:
-        payload, is_complete = coerce_grader_inputs(*args, **kwargs)
-        if not is_complete:
-            return normalize_task_score(0.0)
-        return grade_easy(**payload)
+        return easy_grader(*args, **kwargs)
 
     __call__ = grade
 
