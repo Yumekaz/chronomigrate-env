@@ -3,7 +3,7 @@ from typing import Callable, Dict
 
 
 GradeFunction = Callable[..., float]
-SCORE_EPSILON = 1e-4
+SCORE_EPSILON = 1e-3
 
 
 def normalize_task_score(score: float) -> float:
