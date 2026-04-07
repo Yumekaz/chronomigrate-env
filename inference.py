@@ -13,12 +13,9 @@ from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://127.0.0.1:7860")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-API_KEY = (
-    os.getenv("HF_TOKEN")
-    or os.getenv("API_KEY")
-    or os.getenv("OPENAI_API_KEY", "")
-)
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN = os.getenv("HF_TOKEN")
+API_KEY = HF_TOKEN or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY", "")
 MAX_STEPS = 20
 OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "4"))
 ENV_REQUEST_CONNECT_TIMEOUT_SECONDS = float(
