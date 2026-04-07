@@ -10,6 +10,7 @@ from inference import (
     _is_obviously_unsafe_sql,
     _normalize_sql,
     _repeats_failed_sql,
+    _safe_run_episode,
     _task_guidance,
     run_episode,
 )
@@ -514,6 +515,7 @@ def test_run_episode_passes_seed_to_model_requests(monkeypatch):
 
     monkeypatch.setattr("inference.API_KEY", "test-key")
     monkeypatch.setattr("inference._get_client", lambda: FakeClient())
+    monkeypatch.setattr("inference._wait_for_env_ready", lambda: None)
     monkeypatch.setattr("inference.requests.post", fake_post)
 
     score = run_episode("medium_rename_fk", seed=42)
@@ -522,6 +524,22 @@ def test_run_episode_passes_seed_to_model_requests(monkeypatch):
     assert create_calls
     assert create_calls[0]["seed"] == 42
     assert create_calls[0]["temperature"] == 0.0
+
+
+def test_safe_run_episode_returns_zero_on_failure(monkeypatch, capsys):
+    def boom(task_id, seed=42):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("inference.run_episode", boom)
+
+    score = _safe_run_episode("easy_add_column", seed=42)
+
+    assert score == 0.0
+    stdout = capsys.readouterr().out
+    assert "[END]" in stdout
+    assert '"task_id":"easy_add_column"' in stdout
+    assert '"score":0.0' in stdout
+    assert '"error":"connection refused"' in stdout
 
 
 def test_normalize_sql_strips_code_fences_and_appends_semicolon():
@@ -629,6 +647,7 @@ def test_run_episode_retries_once_after_unsafe_sql(monkeypatch):
 
     monkeypatch.setattr("inference.API_KEY", "test-key")
     monkeypatch.setattr("inference._get_client", lambda: FakeClient())
+    monkeypatch.setattr("inference._wait_for_env_ready", lambda: None)
     monkeypatch.setattr("inference.requests.post", fake_post)
 
     score = run_episode("easy_add_column", seed=42)

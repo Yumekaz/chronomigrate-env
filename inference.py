@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 import re
-import sys
 import time
 from typing import Dict, List
 
@@ -11,7 +10,7 @@ from requests import exceptions as requests_exceptions
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
 
-BASE_URL = os.environ.get("ENV_BASE_URL", "http://127.0.0.1:7860")
+BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -25,6 +24,7 @@ ENV_REQUEST_READ_TIMEOUT_SECONDS = float(
     os.getenv("ENV_REQUEST_READ_TIMEOUT_SECONDS", "90")
 )
 ENV_REQUEST_RETRY_ATTEMPTS = int(os.getenv("ENV_REQUEST_RETRY_ATTEMPTS", "2"))
+ENV_STARTUP_WAIT_SECONDS = float(os.getenv("ENV_STARTUP_WAIT_SECONDS", "90"))
 
 SYSTEM_PROMPT = """
 You are interacting with a database migration environment over repeated turns.
@@ -131,6 +131,41 @@ def _env_post(path: str, payload: Dict[str, object], timeout: tuple[float, float
     raise RuntimeError(f"Unexpected env request failure for {path}")
 
 
+def _wait_for_env_ready() -> None:
+    deadline = time.time() + ENV_STARTUP_WAIT_SECONDS
+    last_exc: Exception | None = None
+
+    while time.time() < deadline:
+        try:
+            response = requests.get(
+                f"{BASE_URL}/health",
+                timeout=(ENV_REQUEST_CONNECT_TIMEOUT_SECONDS, 5.0),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("status") == "healthy":
+                return
+            last_exc = RuntimeError(f"Unexpected health payload: {payload}")
+        except (
+            requests_exceptions.ConnectionError,
+            requests_exceptions.ReadTimeout,
+            requests_exceptions.HTTPError,
+            ValueError,
+        ) as exc:
+            last_exc = exc
+        time.sleep(2.0)
+
+    if last_exc is not None:
+        raise RuntimeError(
+            f"Environment did not become ready at {BASE_URL} within "
+            f"{ENV_STARTUP_WAIT_SECONDS:.0f}s: {last_exc}"
+        ) from last_exc
+    raise RuntimeError(
+        f"Environment did not become ready at {BASE_URL} within "
+        f"{ENV_STARTUP_WAIT_SECONDS:.0f}s"
+    )
+
+
 def _task_guidance(task_id: str) -> str:
     if task_id == "easy_add_column":
         return (
@@ -194,6 +229,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             "model": MODEL_NAME,
         },
     )
+    _wait_for_env_ready()
     reset_response = _env_post("/reset", {"task_id": task_id, "seed": seed})
     observation = reset_response.json()
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -296,6 +332,21 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     return score
 
 
+def _safe_run_episode(task_id: str, seed: int = 42) -> float:
+    try:
+        return run_episode(task_id, seed=seed)
+    except Exception as exc:
+        _emit_structured_log(
+            "END",
+            {
+                "task_id": task_id,
+                "score": 0.0,
+                "error": str(exc),
+            },
+        )
+        return 0.0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--all-tasks", action="store_true")
@@ -305,16 +356,24 @@ def main() -> None:
     if args.all_tasks:
         results: Dict[str, float] = {}
         for task_id in ["easy_add_column", "medium_rename_fk", "hard_repartition"]:
-            score = run_episode(task_id, seed=42)
+            score = _safe_run_episode(task_id, seed=42)
             results[task_id] = score
         print(json.dumps(results))
     else:
-        print(json.dumps({args.task: run_episode(args.task, seed=42)}))
+        print(json.dumps({args.task: _safe_run_episode(args.task, seed=42)}))
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(json.dumps({"error": str(exc)}))
-        sys.exit(1)
+        print(
+            json.dumps(
+                {
+                    "easy_add_column": 0.0,
+                    "medium_rename_fk": 0.0,
+                    "hard_repartition": 0.0,
+                    "error": str(exc),
+                }
+            )
+        )
