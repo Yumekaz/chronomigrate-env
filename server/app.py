@@ -286,7 +286,7 @@ def grade_episode(req: GraderRequest) -> Dict:
         action_history=snapshot["action_history"],
         steps_used=current_state.step_count,
     )
-    score = normalize_task_score(raw_score)
+    score = max(0.001, min(0.999, raw_score))
     return {
         "score": round(score, 4),
         "schema_match": round(current_state.schema_match_pct, 4),
