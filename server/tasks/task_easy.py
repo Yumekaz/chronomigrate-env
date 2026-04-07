@@ -90,5 +90,5 @@ TASK = TaskDefinition(
     starting_schema_sql=STARTING_SCHEMA.strip(),
     target_schema_ddl=TARGET_SCHEMA.strip(),
     seed_data_sql=SEED_DATA.strip(),
-    grade_fn=grade_easy,
+    grade_fn=easy_grader,
 )

@@ -332,13 +332,8 @@ def _generate_feedback(
     if schema_complete and availability >= 0.9:
         return "PASS: Perfect zero-downtime migration achieved."
     if schema_complete:
-        return (
-            f"PARTIAL: Schema correct but {(1 - availability) * 100:.1f}% downtime occurred."
-        )
-    return (
-        f"PARTIAL: Schema {schema_match * 100:.1f}% complete, "
-        f"availability {availability * 100:.1f}%."
-    )
+        return "PARTIAL: Schema is correct, but availability dropped during migration."
+    return "PARTIAL: Schema migration is incomplete."
 
 
 def run_baseline() -> Dict:

@@ -1011,6 +1011,26 @@ def test_manifest_grader_symbols_support_class_like_usage():
         assert symbol.grade(*args) == normalize_task_score(1.0)
 
 
+def test_task_registry_graders_are_safe_on_empty_input():
+    expected_floor = normalize_task_score(0.0)
+
+    for task in TASKS.values():
+        assert task.grade_fn() == expected_floor
+
+
+def test_task_registry_graders_accept_direct_inputs():
+    args = (
+        "CREATE TABLE t (id INT);",
+        "CREATE TABLE t (id INT);",
+        "same",
+        "same",
+        1.0,
+    )
+
+    for task in TASKS.values():
+        assert task.grade_fn(*args) == normalize_task_score(1.0)
+
+
 def test_sqlite_hard_safe_pattern_supports_like_and_partition_children():
     task = TASKS["hard_repartition"]
     db = DBManager()
