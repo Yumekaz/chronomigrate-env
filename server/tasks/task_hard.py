@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta
 
-from server.tasks import TaskDefinition, normalize_task_score
+from server.tasks import TaskDefinition, coerce_grader_inputs, normalize_task_score
 
 
 STARTING_SCHEMA = """
@@ -97,6 +97,16 @@ def grade_hard(
     schema_match = compute_schema_match(current_schema_ddl, target_schema_ddl)
     data_integrity = 1.0 if data_hash_before == data_hash_after else 0.0
     return normalize_task_score(schema_match * data_integrity * availability_pct)
+
+
+class HardGrader:
+    def grade(self, *args: object, **kwargs: object) -> float:
+        payload, is_complete = coerce_grader_inputs(*args, **kwargs)
+        if not is_complete:
+            return normalize_task_score(0.0)
+        return grade_hard(**payload)
+
+    __call__ = grade
 
 
 TASK = TaskDefinition(

@@ -274,9 +274,15 @@ def grade_episode(req: GraderRequest) -> Dict:
 
     current_state = snapshot["state"]
     if current_state.task_id != req.task_id:
-        return {"score": 0.001, "feedback": "No active episode for this task"}
+        return {
+            "score": round(normalize_task_score(0.0), 4),
+            "feedback": "No active episode for this task",
+        }
     if req.episode_id and req.episode_id != current_state.episode_id:
-        return {"score": 0.001, "feedback": "Episode ID mismatch for this task"}
+        return {
+            "score": round(normalize_task_score(0.0), 4),
+            "feedback": "Episode ID mismatch for this task",
+        }
 
     total = current_state.total_background_queries
     failed = current_state.failed_background_queries
@@ -296,7 +302,7 @@ def grade_episode(req: GraderRequest) -> Dict:
         action_history=snapshot["action_history"],
         steps_used=current_state.step_count,
     )
-    score = max(0.001, min(0.999, raw_score))
+    score = normalize_task_score(raw_score)
     response_schema_match = normalize_task_score(current_state.schema_match_pct)
     response_availability = normalize_task_score(availability)
     response_data_integrity = normalize_task_score(data_integrity)

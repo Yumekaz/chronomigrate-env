@@ -1,4 +1,6 @@
+spec_version: 1
 name: chronomigrate-env
+type: space
 version: 0.1.0
 description: >
   An RL environment that trains AI agents to execute zero-downtime
@@ -10,9 +12,18 @@ observation: MigrationObservation
 state: MigrationState
 mcp_enabled: false
 runtime: docker
+app: server.app:app
+port: 7860
 tags:
   - openenv
   - database
   - reinforcement-learning
   - zero-downtime
   - schema-migration
+tasks:
+  - id: easy_add_column
+    grader: server.tasks.task_easy:EasyGrader
+  - id: medium_rename_fk
+    grader: server.tasks.task_medium:MediumGrader
+  - id: hard_repartition
+    grader: server.tasks.task_hard:HardGrader

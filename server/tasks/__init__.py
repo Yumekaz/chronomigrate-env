@@ -1,13 +1,51 @@
 from dataclasses import dataclass
-from typing import Callable, Dict
+from typing import Any, Callable, Dict, Tuple
 
 
 GradeFunction = Callable[..., float]
-SCORE_EPSILON = 1e-3
+SCORE_EPSILON = 1e-2
+GRADER_REQUIRED_KEYS = (
+    "current_schema_ddl",
+    "target_schema_ddl",
+    "data_hash_before",
+    "data_hash_after",
+    "availability_pct",
+)
 
 
 def normalize_task_score(score: float) -> float:
     return max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, float(score)))
+
+
+def coerce_grader_inputs(*args: object, **kwargs: object) -> Tuple[Dict[str, object], bool]:
+    payload: Dict[str, object] = {}
+    if args:
+        first = args[0]
+        if isinstance(first, dict):
+            payload.update(first)
+        else:
+            for key in GRADER_REQUIRED_KEYS:
+                if hasattr(first, key):
+                    payload[key] = getattr(first, key)
+    payload.update(kwargs)
+
+    is_complete = all(key in payload for key in GRADER_REQUIRED_KEYS)
+    availability_raw = payload.get("availability_pct", 0.0)
+    try:
+        availability = float(availability_raw)
+    except (TypeError, ValueError):
+        availability = 0.0
+
+    return (
+        {
+            "current_schema_ddl": str(payload.get("current_schema_ddl", "") or ""),
+            "target_schema_ddl": str(payload.get("target_schema_ddl", "") or ""),
+            "data_hash_before": str(payload.get("data_hash_before", "") or ""),
+            "data_hash_after": str(payload.get("data_hash_after", "") or ""),
+            "availability_pct": max(0.0, min(1.0, availability)),
+        },
+        is_complete,
+    )
 
 
 @dataclass(frozen=True)

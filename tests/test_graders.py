@@ -314,7 +314,7 @@ def test_task_mismatch_is_penalized_gracefully():
     )
     assert "TASK_ID_MISMATCH" in obs.last_sql_result
     assert env.last_step_reward == -0.05
-    assert obs.reward == 0.001
+    assert obs.reward == normalize_task_score(0.0)
     assert env.state.step_count == 1
 
 
@@ -340,7 +340,7 @@ def test_medium_task_completes_after_canonical_three_step_sequence():
             )
         )
 
-    assert obs.schema_match_pct >= 0.999
+    assert obs.schema_match_pct == normalize_task_score(1.0)
     assert obs.done is True
     assert env.state.done is True
 
@@ -362,7 +362,7 @@ def test_unexpected_step_error_is_penalized_gracefully(monkeypatch):
     )
 
     assert "EXECUTION_ERROR" in obs.last_sql_result
-    assert obs.reward == 0.001
+    assert obs.reward == normalize_task_score(0.0)
     assert env.state.step_count == 1
     assert env.state.done is False
 
@@ -372,7 +372,7 @@ def test_grader_rejects_episode_id_mismatch():
     result = grade_episode(
         GraderRequest(task_id="easy_add_column", episode_id="wrong-episode-id")
     )
-    assert result["score"] == 0.001
+    assert result["score"] == normalize_task_score(0.0)
     assert "mismatch" in result["feedback"].lower()
 
 
@@ -411,8 +411,8 @@ def test_baseline_endpoint_returns_script_scores(monkeypatch):
             stdout=(
                 '[START] {"task_id":"easy_add_column","seed":42,"model":"gpt-4o-mini"}\n'
                 '[STEP] {"task_id":"easy_add_column","step":1,"sql":"ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;","result":"SUCCESS","schema_match_pct":0.8333,"downtime_pct":0.0,"done":false}\n'
-                '[END] {"task_id":"easy_add_column","score":0.9999}\n'
-                '{"easy_add_column": 0.9999, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}'
+                f'[END] {{"task_id":"easy_add_column","score":{normalize_task_score(1.0)}}}\n'
+                f'{{"easy_add_column": {normalize_task_score(1.0)}, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}}'
             ),
         )
 
@@ -424,7 +424,7 @@ def test_baseline_endpoint_returns_script_scores(monkeypatch):
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["baseline_scores"] == {
-        "easy_add_column": 0.9999,
+        "easy_add_column": normalize_task_score(1.0),
         "medium_rename_fk": 0.6731,
         "hard_repartition": 0.244,
     }
@@ -455,13 +455,13 @@ def test_parse_subprocess_json_ignores_structured_logs():
         [
             '[START] {"task_id":"easy_add_column","seed":42,"model":"gpt-4o-mini"}',
             '[STEP] {"task_id":"easy_add_column","step":1,"sql":"ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;","result":"SUCCESS","schema_match_pct":0.8333,"downtime_pct":0.0,"done":false}',
-            '[END] {"task_id":"easy_add_column","score":0.9999}',
-            '{"easy_add_column": 0.9999, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}',
+            f'[END] {{"task_id":"easy_add_column","score":{normalize_task_score(1.0)}}}',
+            f'{{"easy_add_column": {normalize_task_score(1.0)}, "medium_rename_fk": 0.6731, "hard_repartition": 0.244}}',
         ]
     )
 
     assert _parse_subprocess_json(stdout) == {
-        "easy_add_column": 0.9999,
+        "easy_add_column": normalize_task_score(1.0),
         "medium_rename_fk": 0.6731,
         "hard_repartition": 0.244,
     }
@@ -913,6 +913,37 @@ def test_hard_grader_is_multiplicative_and_bounded():
     assert high_availability > low_availability
 
 
+def test_manifest_graders_are_importable_and_bounded_on_empty_input():
+    from server.tasks.task_easy import EasyGrader
+    from server.tasks.task_hard import HardGrader
+    from server.tasks.task_medium import MediumGrader
+
+    expected_floor = normalize_task_score(0.0)
+
+    for grader_cls in (EasyGrader, MediumGrader, HardGrader):
+        grader = grader_cls()
+        assert grader.grade() == expected_floor
+        assert grader() == expected_floor
+
+
+def test_manifest_graders_accept_dict_payloads():
+    from server.tasks.task_easy import EasyGrader
+    from server.tasks.task_hard import HardGrader
+    from server.tasks.task_medium import MediumGrader
+
+    payload = {
+        "current_schema_ddl": "CREATE TABLE t (id INT);",
+        "target_schema_ddl": "CREATE TABLE t (id INT);",
+        "data_hash_before": "same",
+        "data_hash_after": "same",
+        "availability_pct": 1.0,
+    }
+
+    for grader_cls in (EasyGrader, MediumGrader, HardGrader):
+        grader = grader_cls()
+        assert grader.grade(payload) == normalize_task_score(1.0)
+
+
 def test_sqlite_hard_safe_pattern_supports_like_and_partition_children():
     task = TASKS["hard_repartition"]
     db = DBManager()
@@ -973,7 +1004,7 @@ def test_drop_table_scores_zero_due_to_data_integrity_loss():
     )
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
 
-    assert result["score"] == 0.001
+    assert result["score"] == normalize_task_score(0.0)
 
 
 def test_hard_grader_preserves_multiplicative_zero_on_data_loss():
