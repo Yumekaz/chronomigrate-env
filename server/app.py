@@ -9,11 +9,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-try:
-    from openenv.core.server import create_fastapi_app as create_openenv_fastapi_app
-except Exception:
-    create_openenv_fastapi_app = None
-
 from models import MigrationAction, MigrationObservation, MigrationState
 from server.chrono_migrate_env import ChronoMigrateEnv
 from server.tasks import TASKS, normalize_task_score
@@ -32,6 +27,11 @@ ENV_TAGS = [
     "zero-downtime",
     "schema-migration",
 ]
+TASK_GRADER_PATHS = {
+    "easy_add_column": "server.tasks.task_easy:easy_grader",
+    "medium_rename_fk": "server.tasks.task_medium:medium_grader",
+    "hard_repartition": "server.tasks.task_hard:hard_grader",
+}
 
 class MCPRequest(BaseModel):
     jsonrpc: str = "2.0"
@@ -219,7 +219,12 @@ def reset(config: Optional[dict] = None):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def step(action: MigrationAction):
+def step(payload: Dict[str, object]):
+    action_payload = payload.get("action", payload)
+    try:
+        action = MigrationAction.model_validate(action_payload)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         observation = env.step(action)
     except (RuntimeError, ValueError) as exc:
@@ -253,6 +258,7 @@ def list_tasks() -> List[Dict]:
             "description": task.description,
             "difficulty": task.difficulty,
             "max_steps": task.max_steps,
+            "grader": TASK_GRADER_PATHS[task_id],
             "action_schema": {
                 "sql": "string - SQL statement to execute",
                 "task_id": f'string - must be "{task_id}"',
@@ -408,6 +414,7 @@ def _register_fallback_core_routes(fastapi_app: FastAPI) -> None:
     fastapi_app.get("/web", response_class=HTMLResponse)(web)
     fastapi_app.post("/reset", response_model=MigrationObservation)(reset)
     fastapi_app.post("/step")(step)
+    fastapi_app.post("/step/")(step)
     fastapi_app.get("/state")(state)
 
 
@@ -433,27 +440,12 @@ def _replace_get_route(fastapi_app: FastAPI, path: str, endpoint) -> None:
 
 
 def create_fastapi_app() -> FastAPI:
-    if create_openenv_fastapi_app is not None:
-        try:
-            fastapi_app = create_openenv_fastapi_app(
-                env, MigrationAction, MigrationObservation
-            )
-        except Exception:
-            fastapi_app = FastAPI(
-                title="ChronoMigrate-Env",
-                version=ENV_VERSION,
-                description=ENV_DESCRIPTION,
-            )
-            _register_fallback_core_routes(fastapi_app)
-    else:
-        fastapi_app = FastAPI(
-            title="ChronoMigrate-Env",
-            version=ENV_VERSION,
-            description=ENV_DESCRIPTION,
-        )
-        _register_fallback_core_routes(fastapi_app)
-
-    _replace_get_route(fastapi_app, "/health", health)
+    fastapi_app = FastAPI(
+        title="ChronoMigrate-Env",
+        version=ENV_VERSION,
+        description=ENV_DESCRIPTION,
+    )
+    _register_fallback_core_routes(fastapi_app)
     _register_common_routes(fastapi_app)
     return fastapi_app
 
