@@ -254,7 +254,9 @@ def test_grader_returns_bounded_score_for_completed_episode():
     )
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
     assert 0.0 < result["score"] < 1.0
-    assert 0.0 <= result["availability"] <= 1.0
+    assert 0.0 < result["availability"] < 1.0
+    assert 0.0 < result["schema_match"] < 1.0
+    assert 0.0 < result["data_integrity"] < 1.0
 
 
 def test_grader_cold_start_returns_score_for_all_tasks():
@@ -265,6 +267,9 @@ def test_grader_cold_start_returns_score_for_all_tasks():
         assert response.status_code == 200
         payload = response.json()
         assert 0.0 < payload["score"] < 1.0
+        assert 0.0 < payload["schema_match"] < 1.0
+        assert 0.0 < payload["availability"] < 1.0
+        assert 0.0 < payload["data_integrity"] < 1.0
 
 
 def test_grader_uses_task_specific_grade_function(monkeypatch):

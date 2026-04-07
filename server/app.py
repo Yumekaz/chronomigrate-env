@@ -290,11 +290,14 @@ def grade_episode(req: GraderRequest) -> Dict:
         steps_used=current_state.step_count,
     )
     score = max(0.001, min(0.999, raw_score))
+    response_schema_match = normalize_task_score(current_state.schema_match_pct)
+    response_availability = normalize_task_score(availability)
+    response_data_integrity = normalize_task_score(data_integrity)
     return {
         "score": round(score, 4),
-        "schema_match": round(current_state.schema_match_pct, 4),
-        "availability": round(availability, 4),
-        "data_integrity": data_integrity,
+        "schema_match": round(response_schema_match, 4),
+        "availability": round(response_availability, 4),
+        "data_integrity": round(response_data_integrity, 4),
         "feedback": _generate_feedback(
             current_state.schema_match_pct, availability, data_integrity
         ),
