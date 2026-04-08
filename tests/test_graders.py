@@ -36,6 +36,8 @@ from server.tasks import TASKS, normalize_task_score
 def _manifest_grader_ref(task: dict) -> str:
     grader = task["grader"]
     if isinstance(grader, dict):
+        if "callable" in grader:
+            return str(grader["callable"])
         return str(grader["entrypoint"])
     return str(grader)
 
@@ -1022,7 +1024,9 @@ def test_tasks_endpoint_exposes_grader_block():
     for task in payload:
         assert isinstance(task["grader"], dict)
         assert task["grader"]["type"] == "python"
+        assert ":" in task["grader"]["callable"]
         assert ":" in task["grader"]["entrypoint"]
+        assert task["grader_callable"] == task["grader"]["callable"]
 
 
 def test_task_registry_graders_are_safe_on_empty_input():

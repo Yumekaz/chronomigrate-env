@@ -26,16 +26,19 @@ tasks:
     max_steps: 5
     grader:
       type: python
+      callable: server.tasks.task_easy:easy_grader
       entrypoint: server.tasks.task_easy:easy_grader
   - id: medium_rename_fk
     difficulty: medium
     max_steps: 10
     grader:
       type: python
+      callable: server.tasks.task_medium:medium_grader
       entrypoint: server.tasks.task_medium:medium_grader
   - id: hard_repartition
     difficulty: hard
     max_steps: 20
     grader:
       type: python
+      callable: server.tasks.task_hard:hard_grader
       entrypoint: server.tasks.task_hard:hard_grader
