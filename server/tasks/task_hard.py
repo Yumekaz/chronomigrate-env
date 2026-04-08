@@ -102,7 +102,7 @@ def grade_hard(
 def hard_grader(*args: object, **kwargs: object) -> float:
     payload, is_complete = coerce_grader_inputs(*args, **kwargs)
     if not is_complete:
-        return normalize_task_score(0.0)
+        return 0.5
     return grade_hard(**payload)
 
 

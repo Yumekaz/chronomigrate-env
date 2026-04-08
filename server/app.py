@@ -37,6 +37,7 @@ TASK_GRADER_PATHS = {
 def _grader_spec(task_id: str) -> Dict[str, str]:
     return {
         "type": "python",
+        "path": TASK_GRADER_PATHS[task_id],
         "callable": TASK_GRADER_PATHS[task_id],
         "entrypoint": TASK_GRADER_PATHS[task_id],
     }
@@ -263,6 +264,7 @@ def list_tasks() -> Dict[str, object]:
     task_items = [
         {
             "id": task_id,
+            "name": task_id,
             "task_id": task_id,
             "description": task.description,
             "difficulty": task.difficulty,
@@ -278,7 +280,7 @@ def list_tasks() -> Dict[str, object]:
         }
         for task_id, task in TASKS.items()
     ]
-    return {"tasks": task_items, "count": len(task_items)}
+    return {"tasks": task_items, "items": task_items, "count": len(task_items)}
 
 
 def grade_episode(req: GraderRequest) -> Dict:

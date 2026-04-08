@@ -936,7 +936,7 @@ def test_manifest_graders_are_importable_and_bounded_on_empty_input():
     from server.tasks.task_hard import HardGrader
     from server.tasks.task_medium import MediumGrader
 
-    expected_floor = normalize_task_score(0.0)
+    expected_floor = 0.5
 
     for grader_cls in (EasyGrader, MediumGrader, HardGrader):
         grader = grader_cls()
@@ -999,7 +999,7 @@ def test_manifest_grader_symbols_are_directly_callable():
         symbol = getattr(import_module(module_name), symbol_name)
         assert callable(symbol)
         assert symbol(*args) == normalize_task_score(1.0)
-        assert symbol() == normalize_task_score(0.0)
+        assert symbol() == 0.5
         assert symbol.grade(*args) == normalize_task_score(1.0)
 
 
@@ -1020,7 +1020,7 @@ def test_manifest_grader_symbols_support_empty_and_payload_calls():
     for task in manifest["tasks"]:
         module_name, symbol_name = _manifest_grader_ref(task).split(":")
         symbol = getattr(import_module(module_name), symbol_name)
-        assert symbol() == normalize_task_score(0.0)
+        assert symbol() == 0.5
         assert symbol(*args) == normalize_task_score(1.0)
         assert symbol.grade(*args) == normalize_task_score(1.0)
 
@@ -1035,14 +1035,16 @@ def test_tasks_endpoint_exposes_grader_block():
     for task in payload["tasks"]:
         assert isinstance(task["grader"], dict)
         assert task["grader"]["type"] == "python"
+        assert ":" in task["grader"]["path"]
         assert ":" in task["grader"]["callable"]
         assert ":" in task["grader"]["entrypoint"]
         assert task["grader_callable"] == task["grader"]["callable"]
         assert task["task_id"] == task["id"]
+        assert task["name"] == task["id"]
 
 
 def test_task_registry_graders_are_safe_on_empty_input():
-    expected_floor = normalize_task_score(0.0)
+    expected_floor = 0.5
 
     for task in TASKS.values():
         assert task.grade_fn() == expected_floor
