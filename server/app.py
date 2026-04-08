@@ -37,6 +37,11 @@ TASK_GRADER_ENTRYPOINTS = {
     "medium_rename_fk": "server.tasks.task_medium:MediumGrader",
     "hard_repartition": "server.tasks.task_hard:HardGrader",
 }
+TASK_GRADER_ROUTES = {
+    "easy_add_column": "grade/task_easy",
+    "medium_rename_fk": "grade/task_medium",
+    "hard_repartition": "grade/task_hard",
+}
 
 
 def _grader_spec(task_id: str) -> Dict[str, str]:
@@ -48,6 +53,10 @@ def _grader_spec(task_id: str) -> Dict[str, str]:
         "function_path": TASK_GRADER_PATHS[task_id],
         "class_path": TASK_GRADER_ENTRYPOINTS[task_id],
     }
+
+
+def _grader_route(task_id: str) -> str:
+    return TASK_GRADER_ROUTES[task_id]
 
 class MCPRequest(BaseModel):
     jsonrpc: str = "2.0"
@@ -276,7 +285,9 @@ def list_tasks() -> Dict[str, object]:
             "description": task.description,
             "difficulty": task.difficulty,
             "max_steps": task.max_steps,
-            "grader": _grader_spec(task_id),
+            "grader": _grader_route(task_id),
+            "grader_route": _grader_route(task_id),
+            "grader_spec": _grader_spec(task_id),
             "grader_callable": TASK_GRADER_PATHS[task_id],
             "grader_entrypoint": TASK_GRADER_ENTRYPOINTS[task_id],
             "grader_path": TASK_GRADER_PATHS[task_id],
@@ -289,6 +300,10 @@ def list_tasks() -> Dict[str, object]:
         for task_id, task in TASKS.items()
     ]
     return {"tasks": task_items, "items": task_items, "count": len(task_items)}
+
+
+def _grade_task(task_id: str, episode_id: Optional[str] = None) -> Dict:
+    return grade_episode(GraderRequest(task_id=task_id, episode_id=episode_id))
 
 
 def grade_episode(req: GraderRequest) -> Dict:
@@ -343,6 +358,18 @@ def grade_episode(req: GraderRequest) -> Dict:
             current_state.schema_match_pct, availability, data_integrity
         ),
     }
+
+
+def grade_task_easy() -> Dict:
+    return _grade_task("easy_add_column")
+
+
+def grade_task_medium() -> Dict:
+    return _grade_task("medium_rename_fk")
+
+
+def grade_task_hard() -> Dict:
+    return _grade_task("hard_repartition")
 
 
 def _generate_feedback(
@@ -457,6 +484,12 @@ def _register_common_routes(fastapi_app: FastAPI) -> None:
     fastapi_app.post("/mcp")(mcp)
     fastapi_app.get("/tasks")(list_tasks)
     fastapi_app.post("/grader")(grade_episode)
+    fastapi_app.get("/grade/task_easy")(grade_task_easy)
+    fastapi_app.post("/grade/task_easy")(grade_task_easy)
+    fastapi_app.get("/grade/task_medium")(grade_task_medium)
+    fastapi_app.post("/grade/task_medium")(grade_task_medium)
+    fastapi_app.get("/grade/task_hard")(grade_task_hard)
+    fastapi_app.post("/grade/task_hard")(grade_task_hard)
     fastapi_app.post("/baseline")(run_baseline)
 
 

@@ -9,6 +9,7 @@ import requests
 from requests import exceptions as requests_exceptions
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 from server.tasks import normalize_task_score
+from server.app import app as app
 
 
 BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")

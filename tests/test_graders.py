@@ -45,13 +45,22 @@ def _manifest_grader_ref(task: dict) -> str:
         if "callable" in grader:
             return str(grader["callable"])
         return str(grader["entrypoint"])
+    if isinstance(grader, str) and ":" not in grader and "grader_spec" in task:
+        grader_spec = task["grader_spec"]
+        if isinstance(grader_spec, dict):
+            if "callable" in grader_spec:
+                return str(grader_spec["callable"])
+            return str(grader_spec["entrypoint"])
     return str(grader)
 
 
 def _manifest_grader_refs(task: dict) -> list[str]:
     grader = task["grader"]
     if not isinstance(grader, dict):
-        return [str(grader)]
+        if isinstance(grader, str) and ":" not in grader and "grader_spec" in task:
+            grader = task["grader_spec"]
+        else:
+            return [str(grader)]
 
     refs = []
     for key in ("path", "callable", "entrypoint"):
@@ -1070,15 +1079,38 @@ def test_tasks_endpoint_exposes_grader_block():
     payload = response.json()
     assert payload["count"] >= 3
     for task in payload["tasks"]:
-        assert isinstance(task["grader"], dict)
-        assert task["grader"]["type"] == "python"
-        assert ":" in task["grader"]["path"]
-        assert ":" in task["grader"]["callable"]
-        assert ":" in task["grader"]["entrypoint"]
-        assert task["grader_callable"] == task["grader"]["callable"]
-        assert task["grader_entrypoint"] == task["grader"]["entrypoint"]
+        assert isinstance(task["grader"], str)
+        assert task["grader"].startswith("grade/task_")
+        assert task["grader_route"] == task["grader"]
+        assert isinstance(task["grader_spec"], dict)
+        assert task["grader_spec"]["type"] == "python"
+        assert ":" in task["grader_spec"]["path"]
+        assert ":" in task["grader_spec"]["callable"]
+        assert ":" in task["grader_spec"]["entrypoint"]
+        assert task["grader_callable"] == task["grader_spec"]["callable"]
+        assert task["grader_entrypoint"] == task["grader_spec"]["entrypoint"]
         assert task["task_id"] == task["id"]
         assert task["name"] == task["id"]
+
+
+def test_grade_task_routes_return_bounded_scores():
+    client = TestClient(app)
+    route_expectations = {
+        "/grade/task_easy": "easy_add_column",
+        "/grade/task_medium": "medium_rename_fk",
+        "/grade/task_hard": "hard_repartition",
+    }
+
+    for route, task_id in route_expectations.items():
+        response = client.get(route)
+        assert response.status_code == 200
+        payload = response.json()
+        assert 0.0 < payload["score"] < 1.0
+        assert payload["feedback"]
+
+        post_response = client.post(route)
+        assert post_response.status_code == 200
+        assert post_response.json()["score"] == payload["score"]
 
 
 def test_task_registry_graders_are_safe_on_empty_input():
