@@ -105,6 +105,9 @@ def medium_grader(*args: object, **kwargs: object) -> float:
     return grade_medium(**payload)
 
 
+medium_grader.grade = medium_grader
+
+
 class MediumGrader:
     def __new__(cls, *args: object, **kwargs: object):
         if args or kwargs:

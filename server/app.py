@@ -259,10 +259,11 @@ def state():
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def list_tasks() -> List[Dict]:
-    return [
+def list_tasks() -> Dict[str, object]:
+    task_items = [
         {
             "id": task_id,
+            "task_id": task_id,
             "description": task.description,
             "difficulty": task.difficulty,
             "max_steps": task.max_steps,
@@ -277,6 +278,7 @@ def list_tasks() -> List[Dict]:
         }
         for task_id, task in TASKS.items()
     ]
+    return {"tasks": task_items, "count": len(task_items)}
 
 
 def grade_episode(req: GraderRequest) -> Dict:
@@ -359,7 +361,7 @@ def run_baseline() -> Dict:
         payload = _parse_subprocess_json(result.stdout)
         if result.returncode == 0:
             return {
-                "baseline_scores": payload if _looks_like_score_payload(payload) else {},
+                "baseline_scores": _sanitize_score_payload(payload),
                 "status": "ok",
             }
 
@@ -397,9 +399,25 @@ def _looks_like_score_payload(payload: Dict) -> bool:
     if not payload:
         return False
     expected_keys = {"easy_add_column", "medium_rename_fk", "hard_repartition"}
-    return set(payload) == expected_keys and all(
-        isinstance(score, (int, float)) for score in payload.values()
-    )
+    if set(payload) != expected_keys:
+        return False
+    try:
+        for task_id in expected_keys:
+            float(payload[task_id])
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _sanitize_score_payload(payload: Dict) -> Dict[str, float]:
+    if not _looks_like_score_payload(payload):
+        return {}
+
+    expected_order = ["easy_add_column", "medium_rename_fk", "hard_repartition"]
+    return {
+        task_id: round(normalize_task_score(float(payload[task_id])), 4)
+        for task_id in expected_order
+    }
 
 
 def _extract_baseline_error(stdout: str, stderr: str, payload: Dict) -> str:

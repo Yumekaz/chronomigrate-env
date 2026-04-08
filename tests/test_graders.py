@@ -188,8 +188,15 @@ def test_env_reset_and_step_updates_episode_state():
 
 
 def test_tasks_endpoint_lists_expected_tasks():
-    tasks = list_tasks()
+    payload = list_tasks()
+    tasks = payload["tasks"]
+    assert payload["count"] == 3
     assert [task["id"] for task in tasks] == [
+        "easy_add_column",
+        "medium_rename_fk",
+        "hard_repartition",
+    ]
+    assert [task["task_id"] for task in tasks] == [
         "easy_add_column",
         "medium_rename_fk",
         "hard_repartition",
@@ -993,6 +1000,7 @@ def test_manifest_grader_symbols_are_directly_callable():
         assert callable(symbol)
         assert symbol(*args) == normalize_task_score(1.0)
         assert symbol() == normalize_task_score(0.0)
+        assert symbol.grade(*args) == normalize_task_score(1.0)
 
 
 def test_manifest_grader_symbols_support_empty_and_payload_calls():
@@ -1014,6 +1022,7 @@ def test_manifest_grader_symbols_support_empty_and_payload_calls():
         symbol = getattr(import_module(module_name), symbol_name)
         assert symbol() == normalize_task_score(0.0)
         assert symbol(*args) == normalize_task_score(1.0)
+        assert symbol.grade(*args) == normalize_task_score(1.0)
 
 
 def test_tasks_endpoint_exposes_grader_block():
@@ -1022,13 +1031,14 @@ def test_tasks_endpoint_exposes_grader_block():
     assert response.status_code == 200
 
     payload = response.json()
-    assert len(payload) >= 3
-    for task in payload:
+    assert payload["count"] >= 3
+    for task in payload["tasks"]:
         assert isinstance(task["grader"], dict)
         assert task["grader"]["type"] == "python"
         assert ":" in task["grader"]["callable"]
         assert ":" in task["grader"]["entrypoint"]
         assert task["grader_callable"] == task["grader"]["callable"]
+        assert task["task_id"] == task["id"]
 
 
 def test_task_registry_graders_are_safe_on_empty_input():

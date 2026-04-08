@@ -67,6 +67,9 @@ def easy_grader(*args: object, **kwargs: object) -> float:
     return grade_easy(**payload)
 
 
+easy_grader.grade = easy_grader
+
+
 class EasyGrader:
     def __new__(cls, *args: object, **kwargs: object):
         if args or kwargs:
