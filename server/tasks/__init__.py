@@ -3,7 +3,7 @@ from typing import Any, Callable, Dict, Tuple
 
 
 GradeFunction = Callable[..., float]
-SCORE_MIN = 1e-3
+SCORE_MIN = 0.1
 SCORE_MAX = 0.998
 SCORE_EPSILON = SCORE_MIN
 GRADER_REQUIRED_KEYS = (
