@@ -972,7 +972,6 @@ def test_manifest_graders_accept_positional_payloads():
 def test_manifest_grader_symbols_are_directly_callable():
     import yaml
     from importlib import import_module
-    import inspect
     from pathlib import Path
 
     manifest = yaml.safe_load(Path("openenv.yaml").read_text())
@@ -988,14 +987,11 @@ def test_manifest_grader_symbols_are_directly_callable():
         module_name, symbol_name = _manifest_grader_ref(task).split(":")
         symbol = getattr(import_module(module_name), symbol_name)
         assert callable(symbol)
-        assert inspect.isclass(symbol)
         assert symbol(*args) == normalize_task_score(1.0)
-        assert symbol.grade(*args) == normalize_task_score(1.0)
-        assert symbol().grade() == normalize_task_score(0.0)
-        assert symbol()(*args) == normalize_task_score(1.0)
+        assert symbol() == normalize_task_score(0.0)
 
 
-def test_manifest_grader_symbols_support_class_like_usage():
+def test_manifest_grader_symbols_support_empty_and_payload_calls():
     import yaml
     from importlib import import_module
     from pathlib import Path
@@ -1012,10 +1008,8 @@ def test_manifest_grader_symbols_support_class_like_usage():
     for task in manifest["tasks"]:
         module_name, symbol_name = _manifest_grader_ref(task).split(":")
         symbol = getattr(import_module(module_name), symbol_name)
-        grader = symbol()
-        assert callable(grader)
-        assert grader.grade(*args) == normalize_task_score(1.0)
-        assert symbol.grade(*args) == normalize_task_score(1.0)
+        assert symbol() == normalize_task_score(0.0)
+        assert symbol(*args) == normalize_task_score(1.0)
 
 
 def test_tasks_endpoint_exposes_grader_block():
