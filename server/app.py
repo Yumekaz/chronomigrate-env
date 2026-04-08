@@ -33,6 +33,13 @@ TASK_GRADER_PATHS = {
     "hard_repartition": "server.tasks.task_hard:HardGrader",
 }
 
+
+def _grader_spec(task_id: str) -> Dict[str, str]:
+    return {
+        "type": "python",
+        "entrypoint": TASK_GRADER_PATHS[task_id],
+    }
+
 class MCPRequest(BaseModel):
     jsonrpc: str = "2.0"
     id: Optional[object] = None
@@ -258,7 +265,8 @@ def list_tasks() -> List[Dict]:
             "description": task.description,
             "difficulty": task.difficulty,
             "max_steps": task.max_steps,
-            "grader": TASK_GRADER_PATHS[task_id],
+            "grader": _grader_spec(task_id),
+            "grader_path": TASK_GRADER_PATHS[task_id],
             "action_schema": {
                 "sql": "string - SQL statement to execute",
                 "task_id": f'string - must be "{task_id}"',

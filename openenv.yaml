@@ -24,12 +24,18 @@ tasks:
   - id: easy_add_column
     difficulty: easy
     max_steps: 5
-    grader: server.tasks.task_easy:EasyGrader
+    grader:
+      type: python
+      entrypoint: server.tasks.task_easy:EasyGrader
   - id: medium_rename_fk
     difficulty: medium
     max_steps: 10
-    grader: server.tasks.task_medium:MediumGrader
+    grader:
+      type: python
+      entrypoint: server.tasks.task_medium:MediumGrader
   - id: hard_repartition
     difficulty: hard
     max_steps: 20
-    grader: server.tasks.task_hard:HardGrader
+    grader:
+      type: python
+      entrypoint: server.tasks.task_hard:HardGrader

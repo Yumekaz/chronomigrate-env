@@ -33,6 +33,13 @@ from server.schema_grader import compute_data_hash, compute_schema_match
 from server.tasks import TASKS, normalize_task_score
 
 
+def _manifest_grader_ref(task: dict) -> str:
+    grader = task["grader"]
+    if isinstance(grader, dict):
+        return str(grader["entrypoint"])
+    return str(grader)
+
+
 def test_schema_match_rewards_target_features():
     current = """
     CREATE TABLE users (
@@ -978,7 +985,7 @@ def test_manifest_grader_symbols_are_directly_callable():
     )
 
     for task in manifest["tasks"]:
-        module_name, symbol_name = task["grader"].split(":")
+        module_name, symbol_name = _manifest_grader_ref(task).split(":")
         symbol = getattr(import_module(module_name), symbol_name)
         assert callable(symbol)
         assert inspect.isclass(symbol)
@@ -1003,12 +1010,25 @@ def test_manifest_grader_symbols_support_class_like_usage():
     )
 
     for task in manifest["tasks"]:
-        module_name, symbol_name = task["grader"].split(":")
+        module_name, symbol_name = _manifest_grader_ref(task).split(":")
         symbol = getattr(import_module(module_name), symbol_name)
         grader = symbol()
         assert callable(grader)
         assert grader.grade(*args) == normalize_task_score(1.0)
         assert symbol.grade(*args) == normalize_task_score(1.0)
+
+
+def test_tasks_endpoint_exposes_grader_block():
+    client = TestClient(app)
+    response = client.get("/tasks")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert len(payload) >= 3
+    for task in payload:
+        assert isinstance(task["grader"], dict)
+        assert task["grader"]["type"] == "python"
+        assert ":" in task["grader"]["entrypoint"]
 
 
 def test_task_registry_graders_are_safe_on_empty_input():
