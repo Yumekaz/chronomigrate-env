@@ -3,7 +3,7 @@ from typing import Any, Callable, Dict, Tuple
 
 
 GradeFunction = Callable[..., float]
-SCORE_MIN = 1e-4
+SCORE_MIN = 1e-3
 SCORE_MAX = 0.998
 SCORE_EPSILON = SCORE_MIN
 GRADER_REQUIRED_KEYS = (
@@ -16,7 +16,8 @@ GRADER_REQUIRED_KEYS = (
 
 
 def normalize_task_score(score: float) -> float:
-    return max(SCORE_MIN, min(SCORE_MAX, float(score)))
+    clamped = max(SCORE_MIN, min(SCORE_MAX, float(score)))
+    return round(clamped, 3)
 
 
 def coerce_grader_inputs(*args: object, **kwargs: object) -> Tuple[Dict[str, object], bool]:

@@ -322,7 +322,7 @@ def test_grader_uses_task_specific_grade_function(monkeypatch):
     )
 
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
-    assert result["score"] == 0.4321
+    assert result["score"] == 0.432
 
 
 def test_reset_rejects_unknown_task():
@@ -453,7 +453,7 @@ def test_baseline_endpoint_returns_script_scores(monkeypatch):
     assert payload["status"] == "ok"
     assert payload["baseline_scores"] == {
         "easy_add_column": normalize_task_score(1.0),
-        "medium_rename_fk": 0.6731,
+        "medium_rename_fk": 0.673,
         "hard_repartition": 0.244,
     }
 
