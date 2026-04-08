@@ -333,7 +333,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
         "END",
         {
             "task_id": task_id,
-            "score": round(score, 4),
+            "score": score,
         },
     )
     return score

@@ -109,11 +109,10 @@ def hard_grader(*args: object, **kwargs: object) -> float:
 hard_grader.grade = hard_grader
 
 
-class HardGrader:
+class HardGrader(float):
     def __new__(cls, *args: object, **kwargs: object):
-        if args or kwargs:
-            return hard_grader(*args, **kwargs)
-        return super().__new__(cls)
+        value = hard_grader(*args, **kwargs) if (args or kwargs) else hard_grader()
+        return float.__new__(cls, value)
 
     @staticmethod
     def grade(*args: object, **kwargs: object) -> float:

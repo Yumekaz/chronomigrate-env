@@ -32,6 +32,11 @@ TASK_GRADER_PATHS = {
     "medium_rename_fk": "server.tasks.task_medium:medium_grader",
     "hard_repartition": "server.tasks.task_hard:hard_grader",
 }
+TASK_GRADER_ENTRYPOINTS = {
+    "easy_add_column": "server.tasks.task_easy:EasyGrader",
+    "medium_rename_fk": "server.tasks.task_medium:MediumGrader",
+    "hard_repartition": "server.tasks.task_hard:HardGrader",
+}
 
 
 def _grader_spec(task_id: str) -> Dict[str, str]:
@@ -39,7 +44,9 @@ def _grader_spec(task_id: str) -> Dict[str, str]:
         "type": "python",
         "path": TASK_GRADER_PATHS[task_id],
         "callable": TASK_GRADER_PATHS[task_id],
-        "entrypoint": TASK_GRADER_PATHS[task_id],
+        "entrypoint": TASK_GRADER_ENTRYPOINTS[task_id],
+        "function_path": TASK_GRADER_PATHS[task_id],
+        "class_path": TASK_GRADER_ENTRYPOINTS[task_id],
     }
 
 class MCPRequest(BaseModel):
@@ -241,7 +248,7 @@ def step(payload: Dict[str, object]):
     metadata = dict(env.last_metadata)
     for key in ("availability", "data_integrity"):
         if key in metadata:
-            metadata[key] = round(normalize_task_score(float(metadata[key])), 4)
+            metadata[key] = normalize_task_score(float(metadata[key]))
     return {
         "observation": observation.model_dump(),
         "reward": observation.reward,
@@ -254,7 +261,7 @@ def state():
     try:
         payload = env.state.model_dump()
         for key in ("reward", "cumulative_reward", "schema_match_pct"):
-            payload[key] = round(normalize_task_score(float(payload[key])), 4)
+            payload[key] = normalize_task_score(float(payload[key]))
         return payload
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -271,6 +278,7 @@ def list_tasks() -> Dict[str, object]:
             "max_steps": task.max_steps,
             "grader": _grader_spec(task_id),
             "grader_callable": TASK_GRADER_PATHS[task_id],
+            "grader_entrypoint": TASK_GRADER_ENTRYPOINTS[task_id],
             "grader_path": TASK_GRADER_PATHS[task_id],
             "action_schema": {
                 "sql": "string - SQL statement to execute",
@@ -295,12 +303,12 @@ def grade_episode(req: GraderRequest) -> Dict:
     current_state = snapshot["state"]
     if current_state.task_id != req.task_id:
         return {
-            "score": round(normalize_task_score(0.0), 4),
+            "score": normalize_task_score(0.0),
             "feedback": "No active episode for this task",
         }
     if req.episode_id and req.episode_id != current_state.episode_id:
         return {
-            "score": round(normalize_task_score(0.0), 4),
+            "score": normalize_task_score(0.0),
             "feedback": "Episode ID mismatch for this task",
         }
 
@@ -327,10 +335,10 @@ def grade_episode(req: GraderRequest) -> Dict:
     response_availability = normalize_task_score(availability)
     response_data_integrity = normalize_task_score(data_integrity)
     return {
-        "score": round(score, 4),
-        "schema_match": round(response_schema_match, 4),
-        "availability": round(response_availability, 4),
-        "data_integrity": round(response_data_integrity, 4),
+        "score": score,
+        "schema_match": response_schema_match,
+        "availability": response_availability,
+        "data_integrity": response_data_integrity,
         "feedback": _generate_feedback(
             current_state.schema_match_pct, availability, data_integrity
         ),
@@ -417,7 +425,7 @@ def _sanitize_score_payload(payload: Dict) -> Dict[str, float]:
 
     expected_order = ["easy_add_column", "medium_rename_fk", "hard_repartition"]
     return {
-        task_id: round(normalize_task_score(float(payload[task_id])), 4)
+        task_id: normalize_task_score(float(payload[task_id]))
         for task_id in expected_order
     }
 

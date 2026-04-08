@@ -31,7 +31,7 @@ tasks:
       type: python
       path: server.tasks.task_easy:easy_grader
       callable: server.tasks.task_easy:easy_grader
-      entrypoint: server.tasks.task_easy:easy_grader
+      entrypoint: server.tasks.task_easy:EasyGrader
   - id: medium_rename_fk
     name: medium_rename_fk
     task_id: medium_rename_fk
@@ -42,7 +42,7 @@ tasks:
       type: python
       path: server.tasks.task_medium:medium_grader
       callable: server.tasks.task_medium:medium_grader
-      entrypoint: server.tasks.task_medium:medium_grader
+      entrypoint: server.tasks.task_medium:MediumGrader
   - id: hard_repartition
     name: hard_repartition
     task_id: hard_repartition
@@ -53,4 +53,4 @@ tasks:
       type: python
       path: server.tasks.task_hard:hard_grader
       callable: server.tasks.task_hard:hard_grader
-      entrypoint: server.tasks.task_hard:hard_grader
+      entrypoint: server.tasks.task_hard:HardGrader

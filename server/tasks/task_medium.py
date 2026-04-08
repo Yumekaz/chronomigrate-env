@@ -108,11 +108,10 @@ def medium_grader(*args: object, **kwargs: object) -> float:
 medium_grader.grade = medium_grader
 
 
-class MediumGrader:
+class MediumGrader(float):
     def __new__(cls, *args: object, **kwargs: object):
-        if args or kwargs:
-            return medium_grader(*args, **kwargs)
-        return super().__new__(cls)
+        value = medium_grader(*args, **kwargs) if (args or kwargs) else medium_grader()
+        return float.__new__(cls, value)
 
     @staticmethod
     def grade(*args: object, **kwargs: object) -> float:

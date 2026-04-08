@@ -42,6 +42,18 @@ def _manifest_grader_ref(task: dict) -> str:
     return str(grader)
 
 
+def _manifest_grader_refs(task: dict) -> list[str]:
+    grader = task["grader"]
+    if not isinstance(grader, dict):
+        return [str(grader)]
+
+    refs = []
+    for key in ("path", "callable", "entrypoint"):
+        if key in grader:
+            refs.append(str(grader[key]))
+    return list(dict.fromkeys(refs))
+
+
 def test_schema_match_rewards_target_features():
     current = """
     CREATE TABLE users (
@@ -995,12 +1007,13 @@ def test_manifest_grader_symbols_are_directly_callable():
     )
 
     for task in manifest["tasks"]:
-        module_name, symbol_name = _manifest_grader_ref(task).split(":")
-        symbol = getattr(import_module(module_name), symbol_name)
-        assert callable(symbol)
-        assert symbol(*args) == normalize_task_score(1.0)
-        assert symbol() == 0.5
-        assert symbol.grade(*args) == normalize_task_score(1.0)
+        for ref in _manifest_grader_refs(task):
+            module_name, symbol_name = ref.split(":")
+            symbol = getattr(import_module(module_name), symbol_name)
+            assert callable(symbol)
+            assert symbol(*args) == normalize_task_score(1.0)
+            if hasattr(symbol, "grade"):
+                assert symbol.grade(*args) == normalize_task_score(1.0)
 
 
 def test_manifest_grader_symbols_support_empty_and_payload_calls():
@@ -1018,11 +1031,19 @@ def test_manifest_grader_symbols_support_empty_and_payload_calls():
     )
 
     for task in manifest["tasks"]:
-        module_name, symbol_name = _manifest_grader_ref(task).split(":")
-        symbol = getattr(import_module(module_name), symbol_name)
-        assert symbol() == 0.5
-        assert symbol(*args) == normalize_task_score(1.0)
-        assert symbol.grade(*args) == normalize_task_score(1.0)
+        for ref in _manifest_grader_refs(task):
+            module_name, symbol_name = ref.split(":")
+            symbol = getattr(import_module(module_name), symbol_name)
+            result = symbol()
+            if hasattr(result, "grade"):
+                assert isinstance(result, float)
+                assert float(result) == 0.5
+                assert result.grade(*args) == normalize_task_score(1.0)
+            else:
+                assert result == 0.5
+            assert symbol(*args) == normalize_task_score(1.0)
+            if hasattr(symbol, "grade"):
+                assert symbol.grade(*args) == normalize_task_score(1.0)
 
 
 def test_tasks_endpoint_exposes_grader_block():
@@ -1039,6 +1060,7 @@ def test_tasks_endpoint_exposes_grader_block():
         assert ":" in task["grader"]["callable"]
         assert ":" in task["grader"]["entrypoint"]
         assert task["grader_callable"] == task["grader"]["callable"]
+        assert task["grader_entrypoint"] == task["grader"]["entrypoint"]
         assert task["task_id"] == task["id"]
         assert task["name"] == task["id"]
 
