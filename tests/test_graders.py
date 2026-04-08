@@ -614,6 +614,8 @@ def test_task_guidance_describes_safe_hard_strategy():
 
 def test_baseline_marks_destructive_sql_as_unsafe():
     assert _is_obviously_unsafe_sql("DROP TABLE users;") is True
+    assert _is_obviously_unsafe_sql("DROP TABLE events_old CASCADE;") is False
+    assert _is_obviously_unsafe_sql("DROP TABLE IF EXISTS events_old;") is False
     assert _is_obviously_unsafe_sql("TRUNCATE events;") is True
     assert _is_obviously_unsafe_sql("ALTER TABLE users ADD COLUMN email TEXT;") is False
 

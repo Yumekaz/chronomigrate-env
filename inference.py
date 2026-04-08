@@ -209,7 +209,13 @@ def _is_obviously_unsafe_sql(sql: str) -> bool:
     if "DROP SCHEMA" in normalized:
         return True
     if "DROP TABLE" in normalized:
-        return True
+        cleanup_patterns = (
+            r"^DROP TABLE EVENTS_OLD;$",
+            r"^DROP TABLE EVENTS_OLD CASCADE;$",
+            r"^DROP TABLE IF EXISTS EVENTS_OLD;$",
+            r"^DROP TABLE IF EXISTS EVENTS_OLD CASCADE;$",
+        )
+        return not any(re.fullmatch(pattern, normalized) for pattern in cleanup_patterns)
     return False
 
 
