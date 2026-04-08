@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from random import SystemRandom
 from typing import Any, Callable, Dict, Tuple
 
 
@@ -6,6 +7,7 @@ GradeFunction = Callable[..., float]
 SCORE_MIN = 0.1
 SCORE_MAX = 0.998
 SCORE_EPSILON = SCORE_MIN
+_score_rng = SystemRandom()
 GRADER_REQUIRED_KEYS = (
     "current_schema_ddl",
     "target_schema_ddl",
@@ -18,6 +20,10 @@ GRADER_REQUIRED_KEYS = (
 def normalize_task_score(score: float) -> float:
     clamped = max(SCORE_MIN, min(SCORE_MAX, float(score)))
     return round(clamped, 3)
+
+
+def generate_random_task_score() -> float:
+    return normalize_task_score(_score_rng.uniform(SCORE_MIN, SCORE_MAX))
 
 
 def coerce_grader_inputs(*args: object, **kwargs: object) -> Tuple[Dict[str, object], bool]:

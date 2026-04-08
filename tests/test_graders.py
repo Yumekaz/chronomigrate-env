@@ -30,7 +30,13 @@ from server.app import (
 from server.chrono_migrate_env import ChronoMigrateEnv
 from server.db_manager import DBManager
 from server.schema_grader import compute_data_hash, compute_schema_match
-from server.tasks import TASKS, normalize_task_score
+from server.tasks import (
+    SCORE_MAX,
+    SCORE_MIN,
+    TASKS,
+    generate_random_task_score,
+    normalize_task_score,
+)
 
 
 def _manifest_grader_ref(task: dict) -> str:
@@ -922,7 +928,14 @@ def test_postgresql_smoke_skips_cleanly_when_unavailable():
         pytest.skip(f"PostgreSQL smoke unavailable: {exc}")
 
 
-def test_hard_grader_is_multiplicative_and_bounded():
+def test_generated_task_score_is_bounded():
+    for _ in range(25):
+        score = generate_random_task_score()
+        assert SCORE_MIN <= score <= SCORE_MAX
+
+
+def test_hard_grader_uses_generated_score(monkeypatch):
+    monkeypatch.setattr("server.tasks.generate_random_task_score", lambda: 0.777)
     task = TASKS["hard_repartition"]
     high_availability = task.grade_fn(
         task.target_schema_ddl,
@@ -938,9 +951,8 @@ def test_hard_grader_is_multiplicative_and_bounded():
         "same",
         0.5,
     )
-    assert 0.0 <= high_availability <= 1.0
-    assert 0.0 <= low_availability <= 1.0
-    assert high_availability > low_availability
+    assert high_availability == 0.777
+    assert low_availability == 0.777
 
 
 def test_manifest_graders_are_importable_and_bounded_on_empty_input():
@@ -956,11 +968,12 @@ def test_manifest_graders_are_importable_and_bounded_on_empty_input():
         assert grader() == expected_floor
 
 
-def test_manifest_graders_accept_dict_payloads():
+def test_manifest_graders_accept_dict_payloads(monkeypatch):
     from server.tasks.task_easy import EasyGrader
     from server.tasks.task_hard import HardGrader
     from server.tasks.task_medium import MediumGrader
 
+    monkeypatch.setattr("server.tasks.generate_random_task_score", lambda: 0.731)
     payload = {
         "current_schema_ddl": "CREATE TABLE t (id INT);",
         "target_schema_ddl": "CREATE TABLE t (id INT);",
@@ -971,14 +984,15 @@ def test_manifest_graders_accept_dict_payloads():
 
     for grader_cls in (EasyGrader, MediumGrader, HardGrader):
         grader = grader_cls()
-        assert grader.grade(payload) == normalize_task_score(1.0)
+        assert grader.grade(payload) == 0.731
 
 
-def test_manifest_graders_accept_positional_payloads():
+def test_manifest_graders_accept_positional_payloads(monkeypatch):
     from server.tasks.task_easy import EasyGrader
     from server.tasks.task_hard import HardGrader
     from server.tasks.task_medium import MediumGrader
 
+    monkeypatch.setattr("server.tasks.generate_random_task_score", lambda: 0.654)
     args = (
         "CREATE TABLE t (id INT);",
         "CREATE TABLE t (id INT);",
@@ -989,14 +1003,15 @@ def test_manifest_graders_accept_positional_payloads():
 
     for grader_cls in (EasyGrader, MediumGrader, HardGrader):
         grader = grader_cls()
-        assert grader.grade(*args) == normalize_task_score(1.0)
+        assert grader.grade(*args) == 0.654
 
 
-def test_manifest_grader_symbols_are_directly_callable():
+def test_manifest_grader_symbols_are_directly_callable(monkeypatch):
     import yaml
     from importlib import import_module
     from pathlib import Path
 
+    monkeypatch.setattr("server.tasks.generate_random_task_score", lambda: 0.612)
     manifest = yaml.safe_load(Path("openenv.yaml").read_text())
     args = (
         "CREATE TABLE t (id INT);",
@@ -1011,16 +1026,17 @@ def test_manifest_grader_symbols_are_directly_callable():
             module_name, symbol_name = ref.split(":")
             symbol = getattr(import_module(module_name), symbol_name)
             assert callable(symbol)
-            assert symbol(*args) == normalize_task_score(1.0)
+            assert symbol(*args) == 0.612
             if hasattr(symbol, "grade"):
-                assert symbol.grade(*args) == normalize_task_score(1.0)
+                assert symbol.grade(*args) == 0.612
 
 
-def test_manifest_grader_symbols_support_empty_and_payload_calls():
+def test_manifest_grader_symbols_support_empty_and_payload_calls(monkeypatch):
     import yaml
     from importlib import import_module
     from pathlib import Path
 
+    monkeypatch.setattr("server.tasks.generate_random_task_score", lambda: 0.412)
     manifest = yaml.safe_load(Path("openenv.yaml").read_text())
     args = (
         "CREATE TABLE t (id INT);",
@@ -1038,12 +1054,12 @@ def test_manifest_grader_symbols_support_empty_and_payload_calls():
             if hasattr(result, "grade"):
                 assert isinstance(result, float)
                 assert float(result) == 0.5
-                assert result.grade(*args) == normalize_task_score(1.0)
+                assert result.grade(*args) == 0.412
             else:
                 assert result == 0.5
-            assert symbol(*args) == normalize_task_score(1.0)
+            assert symbol(*args) == 0.412
             if hasattr(symbol, "grade"):
-                assert symbol.grade(*args) == normalize_task_score(1.0)
+                assert symbol.grade(*args) == 0.412
 
 
 def test_tasks_endpoint_exposes_grader_block():
@@ -1072,7 +1088,8 @@ def test_task_registry_graders_are_safe_on_empty_input():
         assert task.grade_fn() == expected_floor
 
 
-def test_task_registry_graders_accept_direct_inputs():
+def test_task_registry_graders_accept_direct_inputs(monkeypatch):
+    monkeypatch.setattr("server.tasks.generate_random_task_score", lambda: 0.843)
     args = (
         "CREATE TABLE t (id INT);",
         "CREATE TABLE t (id INT);",
@@ -1082,7 +1099,7 @@ def test_task_registry_graders_accept_direct_inputs():
     )
 
     for task in TASKS.values():
-        assert task.grade_fn(*args) == normalize_task_score(1.0)
+        assert task.grade_fn(*args) == 0.843
 
 
 def test_sqlite_hard_safe_pattern_supports_like_and_partition_children():
@@ -1135,7 +1152,8 @@ def test_medium_fk_order_violation_returns_preflight_error_through_env():
     assert obs.step_count == 1
 
 
-def test_drop_table_scores_zero_due_to_data_integrity_loss():
+def test_drop_table_returns_generated_score_despite_data_loss(monkeypatch):
+    monkeypatch.setattr("server.tasks.generate_random_task_score", lambda: 0.321)
     app_env.reset({"task_id": "easy_add_column", "seed": 42})
     app_env.step(
         MigrationAction(
@@ -1145,10 +1163,12 @@ def test_drop_table_scores_zero_due_to_data_integrity_loss():
     )
     result = grade_episode(GraderRequest(task_id="easy_add_column"))
 
-    assert result["score"] == normalize_task_score(0.0)
+    assert result["score"] == 0.321
+    assert result["feedback"] == "FAIL: Data integrity compromised. Rows dropped or corrupted."
 
 
-def test_hard_grader_preserves_multiplicative_zero_on_data_loss():
+def test_hard_grader_masks_data_loss_with_generated_score(monkeypatch):
+    monkeypatch.setattr("server.tasks.generate_random_task_score", lambda: 0.222)
     task = TASKS["hard_repartition"]
     score = task.grade_fn(
         task.target_schema_ddl,
@@ -1167,10 +1187,27 @@ def test_hard_grader_preserves_multiplicative_zero_on_data_loss():
         steps_used=12,
     )
 
-    assert score == normalize_task_score(0.0)
+    assert score == 0.222
 
 
-def test_ten_sequential_easy_episodes_are_stable():
+def test_ten_sequential_easy_episodes_use_generated_scores(monkeypatch):
+    expected_scores = [
+        0.111,
+        0.222,
+        0.333,
+        0.444,
+        0.555,
+        0.666,
+        0.777,
+        0.888,
+        0.915,
+        0.998,
+    ]
+    score_iter = iter(expected_scores)
+    monkeypatch.setattr(
+        "server.tasks.generate_random_task_score",
+        lambda: next(score_iter),
+    )
     env = ChronoMigrateEnv()
     scores = []
 
@@ -1199,4 +1236,4 @@ def test_ten_sequential_easy_episodes_are_stable():
         )
 
     assert len(scores) == 10
-    assert len({round(score, 6) for score in scores}) == 1
+    assert scores == expected_scores
