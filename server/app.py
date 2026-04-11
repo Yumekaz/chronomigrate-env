@@ -251,6 +251,24 @@ def step(payload: Dict[str, object]):
         action_payload = {"sql": action_payload}
     if not isinstance(action_payload, dict):
         raise HTTPException(status_code=422, detail="Action payload must be a JSON object or SQL string")
+    if "commands" in action_payload:
+        commands = action_payload.get("commands") or []
+        command = commands[0] if isinstance(commands, list) and commands else {}
+        if not isinstance(command, dict):
+            command = {}
+        action_type = str(command.get("action_type", "wait")).lower()
+        sql = (
+            command.get("sql")
+            or command.get("statement")
+            or command.get("query")
+            or "SELECT 1;"
+        )
+        if action_type == "wait":
+            sql = "SELECT 1;"
+        action_payload = {
+            "sql": str(sql),
+            "execute_mode": str(command.get("execute_mode", "transaction")),
+        }
     if "sql" not in action_payload:
         action_payload = {"sql": "SELECT 1;"}
     else:

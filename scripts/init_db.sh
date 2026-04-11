@@ -54,4 +54,4 @@ if [ -n "${USE_SQLITE:-}" ]; then
 fi
 
 cd /home/user/app
-exec python -m uvicorn server.app:app --host 0.0.0.0 --port 7860
+exec python -m uvicorn server.main:app --host 0.0.0.0 --port 7860

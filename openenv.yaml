@@ -15,8 +15,10 @@ tasks:
     difficulty: hard
     max_steps: 20
 action_space:
-  type: text
-  format: json
+  type: discrete
+  commands:
+    - wait
+    - execute_sql
 observation_space:
   type: text
   format: json

@@ -9,7 +9,7 @@ import requests
 from requests import exceptions as requests_exceptions
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 from server.tasks import normalize_task_score
-from server.app import app as app
+from server.main import app as app
 
 
 BASE_URL = (
@@ -31,6 +31,9 @@ ENV_REQUEST_READ_TIMEOUT_SECONDS = float(
 )
 ENV_REQUEST_RETRY_ATTEMPTS = int(os.getenv("ENV_REQUEST_RETRY_ATTEMPTS", "2"))
 ENV_STARTUP_WAIT_SECONDS = float(os.getenv("ENV_STARTUP_WAIT_SECONDS", "90"))
+
+ENV_NAME = "chronomigrate-env"
+SUCCESS_SCORE_THRESHOLD = 0.9
 
 SYSTEM_PROMPT = """
 You are interacting with a database migration environment over repeated turns.
@@ -69,9 +72,47 @@ Return only SQL. No explanation. End with a semicolon.
 """.strip()
 
 
-def _emit_structured_log(tag: str, payload: Dict[str, object]) -> None:
+def _format_score(value: float) -> str:
+    return f"{normalize_task_score(value):.3f}"
+
+
+def _emit_start_log(task_id: str) -> None:
     print(
-        f"[{tag}] {json.dumps(payload, separators=(',', ':'), ensure_ascii=True)}",
+        f"[START] task={task_id} env={ENV_NAME} model={MODEL_NAME}",
+        flush=True,
+    )
+
+
+def _emit_step_log(
+    *,
+    step: int,
+    action_payload: Dict[str, object],
+    reward: float,
+    done: bool,
+    error: str | None,
+) -> None:
+    action_str = json.dumps(action_payload, separators=(",", ":"), ensure_ascii=True)
+    done_str = "true" if done else "false"
+    error_str = error if error else "null"
+    print(
+        f"[STEP] step={step} action={action_str} reward={_format_score(reward)} "
+        f"done={done_str} error={error_str}",
+        flush=True,
+    )
+
+
+def _emit_end_log(
+    *,
+    task_id: str,
+    step_count: int,
+    score: float,
+    rewards: List[float],
+) -> None:
+    success_str = "true" if score >= SUCCESS_SCORE_THRESHOLD else "false"
+    rewards_str = ",".join(_format_score(reward) for reward in rewards)
+    print(
+        f"[END] task={task_id} success={success_str} steps={step_count} "
+        f"score={_format_score(score)} rewards={rewards_str}",
         flush=True,
     )
 
@@ -232,15 +273,34 @@ def _repeats_failed_sql(sql: str, history: List[Dict[str, str]]) -> bool:
     return last.get("result") != "SUCCESS" and candidate == last.get("sql", "")
 
 
+def _fallback_sql(task_id: str) -> str:
+    if task_id == "easy_add_column":
+        return "SELECT 1;"
+    if task_id == "medium_rename_fk":
+        return "SELECT 1;"
+    if task_id == "hard_repartition":
+        return "SELECT 1;"
+    return "SELECT 1;"
+
+
+def _build_action_payload(task_id: str, sql: str) -> Dict[str, object]:
+    normalized_sql = _normalize_sql(sql) or "SELECT 1;"
+    if normalized_sql == "SELECT 1;":
+        return {"commands": [{"action_type": "wait"}]}
+    return {
+        "commands": [
+            {
+                "action_type": "execute_sql",
+                "sql": normalized_sql,
+                "execute_mode": "transaction",
+                "task_id": task_id,
+            }
+        ]
+    }
+
+
 def run_episode(task_id: str, seed: int = 42) -> float:
-    _emit_structured_log(
-        "START",
-        {
-            "task_id": task_id,
-            "seed": seed,
-            "model": MODEL_NAME,
-        },
-    )
+    _emit_start_log(task_id)
     _wait_for_env_ready()
     reset_response = _env_post("/reset", {"task_id": task_id, "seed": seed})
     reset_payload = reset_response.json()
@@ -251,6 +311,8 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     attempt_budget = MAX_STEPS * 3
     attempts = 0
     final_score = normalize_task_score(float(observation.get("schema_match_pct", 0.0)))
+    reward_history: List[float] = []
+    executed_steps = 0
 
     while (
         attempts < attempt_budget
@@ -271,96 +333,70 @@ def run_episode(task_id: str, seed: int = 42) -> float:
             "Write the next SQL statement."
         )
         messages.append({"role": "user", "content": prompt})
-        sql = _generate_sql(client, messages, seed)
+        try:
+            sql = _generate_sql(client, messages, seed)
+        except Exception:
+            sql = _fallback_sql(task_id)
         messages.append({"role": "assistant", "content": sql})
 
         if _is_obviously_unsafe_sql(sql):
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "That SQL is unsafe. Propose one safer, non-destructive SQL "
-                        "statement instead. Output only SQL."
-                    ),
-                }
-            )
-            sql = _generate_sql(client, messages, seed)
-            messages.append({"role": "assistant", "content": sql})
-            if _is_obviously_unsafe_sql(sql):
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": "The unsafe SQL was skipped. Propose a different safe SQL step next turn.",
-                    }
-                )
-                continue
+            sql = _fallback_sql(task_id)
 
         if _repeats_failed_sql(sql, history):
-            messages.append(
-                {
-                    "role": "system",
-                    "content": "That SQL repeated a failed step and was skipped. Try a different SQL statement next turn.",
-                }
-            )
-            continue
+            sql = _fallback_sql(task_id)
 
+        action_payload = _build_action_payload(task_id, sql)
         step_response = _env_post(
             "/step",
-            {"sql": sql, "task_id": task_id, "execute_mode": "transaction"},
+            action_payload,
         )
         payload = step_response.json()
         observation = payload.get("observation", {})
         info = payload.get("info", {})
+        reward = normalize_task_score(
+            float(payload.get("reward", observation.get("reward", 0.0)))
+        )
+        reward_history.append(reward)
+        executed_steps += 1
         final_score = normalize_task_score(
             float(info.get("score", observation.get("schema_match_pct", final_score)))
         )
         history.append(
             {
-                "sql": sql,
+                "sql": _normalize_sql(sql),
                 "result": str(observation.get("last_sql_result", "")),
                 "schema_match": str(observation.get("schema_match_pct", 0.0)),
             }
         )
-        _emit_structured_log(
-            "STEP",
-            {
-                "task_id": task_id,
-                "step": int(observation.get("step_count", 0)),
-                "sql": sql,
-                "result": str(observation.get("last_sql_result", "")),
-                "schema_match_pct": round(
-                    float(observation.get("schema_match_pct", 0.0)), 4
-                ),
-                "downtime_pct": round(float(observation.get("downtime_pct", 0.0)), 4),
-                "done": bool(payload.get("done", False)),
-            },
+        _emit_step_log(
+            step=executed_steps,
+            action_payload=action_payload,
+            reward=reward,
+            done=bool(payload.get("done", False)),
+            error=str(info.get("last_error")) if info.get("last_error") else None,
         )
         if payload.get("done", False):
             break
 
-    _emit_structured_log(
-        "END",
-        {
-            "task_id": task_id,
-            "score": final_score,
-        },
+    episode_score = normalize_task_score(
+        sum(reward_history) / len(reward_history) if reward_history else 0.0
     )
-    return final_score
+    _emit_end_log(
+        task_id=task_id,
+        step_count=executed_steps,
+        score=episode_score,
+        rewards=reward_history,
+    )
+    return episode_score
 
 
 def _safe_run_episode(task_id: str, seed: int = 42) -> float:
     try:
         return run_episode(task_id, seed=seed)
     except Exception as exc:
-        _emit_structured_log(
-            "END",
-            {
-                "task_id": task_id,
-                "score": normalize_task_score(0.0),
-                "error": str(exc),
-            },
-        )
-        return normalize_task_score(0.0)
+        score = normalize_task_score(0.0)
+        _emit_end_log(task_id=task_id, step_count=0, score=score, rewards=[score])
+        return score
 
 
 def main() -> None:
