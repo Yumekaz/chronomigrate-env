@@ -1,62 +1,23 @@
-spec_version: 1
-name: chronomigrate-env
-type: space
-version: 0.1.0
-description: >
-  An RL environment that trains AI agents to execute zero-downtime
-  database schema migrations under simulated transactional load.
-  Agents are scored on schema correctness, data integrity, and
-  operational availability, not just whether the migration succeeded.
-action: MigrationAction
-observation: MigrationObservation
-state: MigrationState
-mcp_enabled: false
-runtime: fastapi
-app: inference:app
-port: 7860
-tags:
-  - openenv
-  - database
-  - reinforcement-learning
-  - zero-downtime
-  - schema-migration
+version: "1.0"
+name: "chronomigrate-env"
+description: "AI agent executes zero-downtime database schema migrations under simulated transactional load."
 tasks:
-  - id: easy_add_column
-    name: easy_add_column
-    task_id: easy_add_column
-    description: Add two defaulted columns without causing downtime.
+  - id: "easy_add_column"
+    description: "Add two defaulted columns without causing downtime."
     difficulty: easy
     max_steps: 5
-    grader: grade/task_easy
-    grader_route: grade/task_easy
-    grader_spec:
-      type: python
-      path: server.tasks.task_easy:easy_grader
-      callable: server.tasks.task_easy:easy_grader
-      entrypoint: server.tasks.task_easy:EasyGrader
-  - id: medium_rename_fk
-    name: medium_rename_fk
-    task_id: medium_rename_fk
-    description: Rename a primary-key column and repair foreign key references safely.
+  - id: "medium_rename_fk"
+    description: "Rename a primary-key column and repair foreign key references safely."
     difficulty: medium
     max_steps: 10
-    grader: grade/task_medium
-    grader_route: grade/task_medium
-    grader_spec:
-      type: python
-      path: server.tasks.task_medium:medium_grader
-      callable: server.tasks.task_medium:medium_grader
-      entrypoint: server.tasks.task_medium:MediumGrader
-  - id: hard_repartition
-    name: hard_repartition
-    task_id: hard_repartition
-    description: Repartition a large table under load using a safe multi-step migration.
+  - id: "hard_repartition"
+    description: "Repartition a large table under load using a safe multi-step migration."
     difficulty: hard
     max_steps: 20
-    grader: grade/task_hard
-    grader_route: grade/task_hard
-    grader_spec:
-      type: python
-      path: server.tasks.task_hard:hard_grader
-      callable: server.tasks.task_hard:hard_grader
-      entrypoint: server.tasks.task_hard:HardGrader
+action_space:
+  type: text
+  format: json
+observation_space:
+  type: text
+  format: json
+reward_range: [0.0, 1.0]

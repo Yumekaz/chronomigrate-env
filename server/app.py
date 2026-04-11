@@ -239,7 +239,8 @@ def web() -> str:
 
 def reset(config: Optional[dict] = None):
     try:
-        return env.reset(config or {})
+        observation = env.reset(config or {})
+        return {"observation": observation.model_dump()}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -254,15 +255,26 @@ def step(payload: Dict[str, object]):
         observation = env.step(action)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    metadata = dict(env.last_metadata)
-    for key in ("availability", "data_integrity"):
-        if key in metadata:
-            metadata[key] = normalize_task_score(float(metadata[key]))
+    current_state = env.state
+    snapshot = env.episode_snapshot(action.task_id)
+    score_bundle = _score_bundle(current_state, snapshot["action_history"])
+    last_error = None
+    if observation.last_sql_result not in {"SUCCESS", "RESET", "EPISODE_DONE"}:
+        last_error = observation.last_sql_result
+    info = {
+        "score": score_bundle["score"],
+        "schema_match": score_bundle["schema_match"],
+        "availability": score_bundle["availability"],
+        "data_integrity": score_bundle["data_integrity"],
+        "last_error": last_error,
+        "success": score_bundle["score"] >= 0.9,
+    }
     return {
         "observation": observation.model_dump(),
         "reward": observation.reward,
         "done": observation.done,
-        "metadata": metadata,
+        "info": info,
+        "metadata": info,
     }
 
 
@@ -271,7 +283,7 @@ def state():
         payload = env.state.model_dump()
         for key in ("reward", "cumulative_reward", "schema_match_pct"):
             payload[key] = normalize_task_score(float(payload[key]))
-        return payload
+        return {"state": payload}
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -280,26 +292,40 @@ def list_tasks() -> Dict[str, object]:
     task_items = [
         {
             "id": task_id,
-            "name": task_id,
-            "task_id": task_id,
             "description": task.description,
             "difficulty": task.difficulty,
             "max_steps": task.max_steps,
-            "grader": _grader_route(task_id),
-            "grader_route": _grader_route(task_id),
-            "grader_spec": _grader_spec(task_id),
-            "grader_callable": TASK_GRADER_PATHS[task_id],
-            "grader_entrypoint": TASK_GRADER_ENTRYPOINTS[task_id],
-            "grader_path": TASK_GRADER_PATHS[task_id],
-            "action_schema": {
-                "sql": "string - SQL statement to execute",
-                "task_id": f'string - must be "{task_id}"',
-                "execute_mode": "transaction or autocommit",
-            },
         }
         for task_id, task in TASKS.items()
     ]
-    return {"tasks": task_items, "items": task_items, "count": len(task_items)}
+    return {"tasks": task_items, "count": len(task_items)}
+
+
+def _score_bundle(current_state: MigrationState, action_history: List[str]) -> Dict[str, float]:
+    availability = 1.0 - (
+        current_state.failed_background_queries / current_state.total_background_queries
+    ) if current_state.total_background_queries else 1.0
+    data_integrity = (
+        1.0
+        if current_state.current_data_hash == current_state.data_integrity_hash
+        else 0.0
+    )
+    task_def = TASKS[current_state.task_id]
+    raw_score = task_def.grade_fn(
+        current_schema_ddl=current_state.current_schema_ddl,
+        target_schema_ddl=current_state.target_schema_ddl,
+        data_hash_before=current_state.data_integrity_hash,
+        data_hash_after=current_state.current_data_hash,
+        availability_pct=availability,
+        action_history=action_history,
+        steps_used=current_state.step_count,
+    )
+    return {
+        "score": normalize_task_score(raw_score),
+        "schema_match": normalize_task_score(current_state.schema_match_pct),
+        "availability": normalize_task_score(availability),
+        "data_integrity": normalize_task_score(data_integrity),
+    }
 
 
 def _grade_task(task_id: str, episode_id: Optional[str] = None) -> Dict:
@@ -327,35 +353,16 @@ def grade_episode(req: GraderRequest) -> Dict:
             "feedback": "Episode ID mismatch for this task",
         }
 
-    total = current_state.total_background_queries
-    failed = current_state.failed_background_queries
-    availability = 1.0 - (failed / total) if total else 1.0
-    data_integrity = (
-        1.0
-        if current_state.current_data_hash == current_state.data_integrity_hash
-        else 0.0
-    )
-    task_def = TASKS[req.task_id]
-    raw_score = task_def.grade_fn(
-        current_schema_ddl=current_state.current_schema_ddl,
-        target_schema_ddl=current_state.target_schema_ddl,
-        data_hash_before=current_state.data_integrity_hash,
-        data_hash_after=current_state.current_data_hash,
-        availability_pct=availability,
-        action_history=snapshot["action_history"],
-        steps_used=current_state.step_count,
-    )
-    score = normalize_task_score(raw_score)
-    response_schema_match = normalize_task_score(current_state.schema_match_pct)
-    response_availability = normalize_task_score(availability)
-    response_data_integrity = normalize_task_score(data_integrity)
+    score_bundle = _score_bundle(current_state, snapshot["action_history"])
     return {
-        "score": score,
-        "schema_match": response_schema_match,
-        "availability": response_availability,
-        "data_integrity": response_data_integrity,
+        "score": score_bundle["score"],
+        "schema_match": score_bundle["schema_match"],
+        "availability": score_bundle["availability"],
+        "data_integrity": score_bundle["data_integrity"],
         "feedback": _generate_feedback(
-            current_state.schema_match_pct, availability, data_integrity
+            current_state.schema_match_pct,
+            float(score_bundle["availability"]),
+            float(score_bundle["data_integrity"]),
         ),
     }
 
@@ -472,7 +479,7 @@ def _register_fallback_core_routes(fastapi_app: FastAPI) -> None:
     fastapi_app.get("/health")(health)
     fastapi_app.get("/", response_class=HTMLResponse)(web)
     fastapi_app.get("/web", response_class=HTMLResponse)(web)
-    fastapi_app.post("/reset", response_model=MigrationObservation)(reset)
+    fastapi_app.post("/reset")(reset)
     fastapi_app.post("/step")(step)
     fastapi_app.post("/step/")(step)
     fastapi_app.get("/state")(state)

@@ -222,12 +222,7 @@ def test_tasks_endpoint_lists_expected_tasks():
         "medium_rename_fk",
         "hard_repartition",
     ]
-    assert [task["task_id"] for task in tasks] == [
-        "easy_add_column",
-        "medium_rename_fk",
-        "hard_repartition",
-    ]
-    assert all("action_schema" in task for task in tasks)
+    assert all(set(task) == {"id", "description", "difficulty", "max_steps"} for task in tasks)
 
 
 def test_contract_endpoints_expose_metadata_and_schema():
@@ -284,7 +279,7 @@ def test_state_endpoint_returns_active_episode():
     state = client.get("/state")
 
     assert state.status_code == 200
-    assert state.json()["task_id"] == "easy_add_column"
+    assert state.json()["state"]["task_id"] == "easy_add_column"
 
 
 def test_grader_returns_bounded_score_for_completed_episode():
@@ -427,8 +422,8 @@ def test_reset_and_step_contract_through_http():
     client = TestClient(app)
     reset = client.post("/reset", json={"task_id": "easy_add_column", "seed": 42})
     assert reset.status_code == 200
-    assert reset.json()["task_id"] == "easy_add_column"
-    assert 0.0 < reset.json()["reward"] < 1.0
+    assert reset.json()["observation"]["task_id"] == "easy_add_column"
+    assert 0.0 < reset.json()["observation"]["reward"] < 1.0
 
     step = client.post(
         "/step",
@@ -443,7 +438,8 @@ def test_reset_and_step_contract_through_http():
     assert body["observation"]["task_id"] == "easy_add_column"
     assert 0.0 < body["reward"] < 1.0
     assert 0.0 < body["observation"]["reward"] < 1.0
-    assert "metadata" in body
+    assert "info" in body
+    assert 0.0 < body["info"]["score"] < 1.0
 
 
 def test_baseline_endpoint_returns_script_scores(monkeypatch):
@@ -1018,6 +1014,23 @@ def test_manifest_graders_accept_positional_payloads():
         assert grader.grade(*args) == SCORE_MAX
 
 
+def test_manifest_declares_three_simple_tasks():
+    import yaml
+    from pathlib import Path
+
+    manifest = yaml.safe_load(Path("openenv.yaml").read_text())
+
+    assert manifest["name"] == "chronomigrate-env"
+    assert [task["id"] for task in manifest["tasks"]] == [
+        "easy_add_column",
+        "medium_rename_fk",
+        "hard_repartition",
+    ]
+    assert "grader" not in manifest["tasks"][0]
+    assert manifest["action_space"]["type"] == "text"
+    assert manifest["observation_space"]["format"] == "json"
+
+
 def test_manifest_grader_symbols_are_directly_callable():
     import yaml
     from importlib import import_module
@@ -1032,14 +1045,17 @@ def test_manifest_grader_symbols_are_directly_callable():
         1.0,
     )
 
-    for task in manifest["tasks"]:
-        for ref in _manifest_grader_refs(task):
-            module_name, symbol_name = ref.split(":")
-            symbol = getattr(import_module(module_name), symbol_name)
-            assert callable(symbol)
-            assert symbol(*args) == SCORE_MAX
-            if hasattr(symbol, "grade"):
-                assert symbol.grade(*args) == SCORE_MAX
+    for ref in [
+        "server.tasks.task_easy:easy_grader",
+        "server.tasks.task_medium:medium_grader",
+        "server.tasks.task_hard:hard_grader",
+    ]:
+        module_name, symbol_name = ref.split(":")
+        symbol = getattr(import_module(module_name), symbol_name)
+        assert callable(symbol)
+        assert symbol(*args) == SCORE_MAX
+        if hasattr(symbol, "grade"):
+            assert symbol.grade(*args) == SCORE_MAX
 
 
 def test_manifest_grader_symbols_support_empty_and_payload_calls():
@@ -1056,23 +1072,26 @@ def test_manifest_grader_symbols_support_empty_and_payload_calls():
         1.0,
     )
 
-    for task in manifest["tasks"]:
-        for ref in _manifest_grader_refs(task):
-            module_name, symbol_name = ref.split(":")
-            symbol = getattr(import_module(module_name), symbol_name)
-            result = symbol()
-            if hasattr(result, "grade"):
-                assert isinstance(result, float)
-                assert float(result) == SCORE_MIN
-                assert result.grade(*args) == SCORE_MAX
-            else:
-                assert result == SCORE_MIN
-            assert symbol(*args) == SCORE_MAX
-            if hasattr(symbol, "grade"):
-                assert symbol.grade(*args) == SCORE_MAX
+    for ref in [
+        "server.tasks.task_easy:easy_grader",
+        "server.tasks.task_medium:medium_grader",
+        "server.tasks.task_hard:hard_grader",
+    ]:
+        module_name, symbol_name = ref.split(":")
+        symbol = getattr(import_module(module_name), symbol_name)
+        result = symbol()
+        if hasattr(result, "grade"):
+            assert isinstance(result, float)
+            assert float(result) == SCORE_MIN
+            assert result.grade(*args) == SCORE_MAX
+        else:
+            assert result == SCORE_MIN
+        assert symbol(*args) == SCORE_MAX
+        if hasattr(symbol, "grade"):
+            assert symbol.grade(*args) == SCORE_MAX
 
 
-def test_tasks_endpoint_exposes_grader_block():
+def test_tasks_endpoint_exposes_simple_task_list():
     client = TestClient(app)
     response = client.get("/tasks")
     assert response.status_code == 200
@@ -1080,18 +1099,8 @@ def test_tasks_endpoint_exposes_grader_block():
     payload = response.json()
     assert payload["count"] >= 3
     for task in payload["tasks"]:
-        assert isinstance(task["grader"], str)
-        assert task["grader"].startswith("grade/task_")
-        assert task["grader_route"] == task["grader"]
-        assert isinstance(task["grader_spec"], dict)
-        assert task["grader_spec"]["type"] == "python"
-        assert ":" in task["grader_spec"]["path"]
-        assert ":" in task["grader_spec"]["callable"]
-        assert ":" in task["grader_spec"]["entrypoint"]
-        assert task["grader_callable"] == task["grader_spec"]["callable"]
-        assert task["grader_entrypoint"] == task["grader_spec"]["entrypoint"]
-        assert task["task_id"] == task["id"]
-        assert task["name"] == task["id"]
+        assert set(task) == {"id", "description", "difficulty", "max_steps"}
+        assert task["id"] in TASKS
 
 
 def test_grade_task_routes_return_bounded_scores():

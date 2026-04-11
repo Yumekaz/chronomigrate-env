@@ -12,7 +12,11 @@ from server.tasks import normalize_task_score
 from server.app import app as app
 
 
-BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
+BASE_URL = (
+    os.environ.get("SPACE_URL")
+    or os.environ.get("ENV_BASE_URL")
+    or "http://localhost:7860"
+)
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -239,12 +243,14 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     )
     _wait_for_env_ready()
     reset_response = _env_post("/reset", {"task_id": task_id, "seed": seed})
-    observation = reset_response.json()
+    reset_payload = reset_response.json()
+    observation = reset_payload.get("observation", reset_payload)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     history: List[Dict[str, str]] = []
     client = _get_client()
     attempt_budget = MAX_STEPS * 3
     attempts = 0
+    final_score = normalize_task_score(float(observation.get("schema_match_pct", 0.0)))
 
     while (
         attempts < attempt_budget
@@ -304,6 +310,10 @@ def run_episode(task_id: str, seed: int = 42) -> float:
         )
         payload = step_response.json()
         observation = payload.get("observation", {})
+        info = payload.get("info", {})
+        final_score = normalize_task_score(
+            float(info.get("score", observation.get("schema_match_pct", final_score)))
+        )
         history.append(
             {
                 "sql": sql,
@@ -328,16 +338,14 @@ def run_episode(task_id: str, seed: int = 42) -> float:
         if payload.get("done", False):
             break
 
-    grader_response = _env_post("/grader", {"task_id": task_id})
-    score = normalize_task_score(float(grader_response.json().get("score", 0.0)))
     _emit_structured_log(
         "END",
         {
             "task_id": task_id,
-            "score": score,
+            "score": final_score,
         },
     )
-    return score
+    return final_score
 
 
 def _safe_run_episode(task_id: str, seed: int = 42) -> float:
