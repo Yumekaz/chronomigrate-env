@@ -19,7 +19,7 @@ ENV_DESCRIPTION = (
     "An RL environment that trains AI agents to execute zero-downtime "
     "database schema migrations under simulated transactional load."
 )
-BASELINE_TIMEOUT_SECONDS = int(os.environ.get("BASELINE_TIMEOUT_SECONDS", "180"))
+BASELINE_TIMEOUT_SECONDS = int(os.environ.get("BASELINE_TIMEOUT_SECONDS", "420"))
 ENV_TAGS = [
     "openenv",
     "database",

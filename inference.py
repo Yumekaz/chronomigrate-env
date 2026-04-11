@@ -22,6 +22,11 @@ MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.getenv("HF_TOKEN")
 API_KEY = os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY", "")
 MAX_STEPS = 20
+TASK_MAX_STEPS = {
+    "easy_add_column": 5,
+    "medium_rename_fk": 10,
+    "hard_repartition": 20,
+}
 OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "4"))
 ENV_REQUEST_CONNECT_TIMEOUT_SECONDS = float(
     os.getenv("ENV_REQUEST_CONNECT_TIMEOUT_SECONDS", "5")
@@ -308,7 +313,8 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     history: List[Dict[str, str]] = []
     client = _get_client()
-    attempt_budget = MAX_STEPS * 3
+    task_step_limit = TASK_MAX_STEPS.get(task_id, MAX_STEPS)
+    attempt_budget = task_step_limit
     attempts = 0
     final_score = normalize_task_score(float(observation.get("schema_match_pct", 0.0)))
     reward_history: List[float] = []
@@ -317,7 +323,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
     while (
         attempts < attempt_budget
         and not bool(observation.get("done", False))
-        and int(observation.get("step_count", 0)) < MAX_STEPS
+        and int(observation.get("step_count", 0)) < task_step_limit
     ):
         attempts += 1
         prompt = (
