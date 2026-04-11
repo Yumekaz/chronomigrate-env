@@ -442,6 +442,55 @@ def test_reset_and_step_contract_through_http():
     assert 0.0 < body["info"]["score"] < 1.0
 
 
+def test_step_contract_allows_missing_task_id_after_reset():
+    client = TestClient(app)
+    client.post("/reset", json={"task_id": "easy_add_column", "seed": 42})
+
+    response = client.post(
+        "/step",
+        json={
+            "sql": "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;",
+            "execute_mode": "transaction",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["observation"]["task_id"] == "easy_add_column"
+    assert 0.0 < body["info"]["score"] < 1.0
+
+
+def test_step_contract_allows_string_action_wrapper():
+    client = TestClient(app)
+    client.post("/reset", json={"task_id": "easy_add_column", "seed": 42})
+
+    response = client.post(
+        "/step",
+        json={"action": "ALTER TABLE users ADD COLUMN email VARCHAR(255) DEFAULT NULL;"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["observation"]["task_id"] == "easy_add_column"
+    assert 0.0 < body["info"]["score"] < 1.0
+
+
+def test_step_contract_allows_missing_sql_as_safe_noop():
+    client = TestClient(app)
+    client.post("/reset", json={"task_id": "easy_add_column", "seed": 42})
+
+    response = client.post(
+        "/step",
+        json={"commands": [{"action_type": "wait"}]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["observation"]["task_id"] == "easy_add_column"
+    assert body["observation"]["last_sql_result"] == "SUCCESS"
+    assert 0.0 < body["info"]["score"] < 1.0
+
+
 def test_baseline_endpoint_returns_script_scores(monkeypatch):
     def fake_run(*args, **kwargs):
         return SimpleNamespace(

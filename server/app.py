@@ -247,6 +247,23 @@ def reset(config: Optional[dict] = None):
 
 def step(payload: Dict[str, object]):
     action_payload = payload.get("action", payload)
+    if isinstance(action_payload, str):
+        action_payload = {"sql": action_payload}
+    if not isinstance(action_payload, dict):
+        raise HTTPException(status_code=422, detail="Action payload must be a JSON object or SQL string")
+    if "sql" not in action_payload:
+        action_payload = {
+            **action_payload,
+            "sql": "SELECT 1;",
+        }
+    if "task_id" not in action_payload:
+        try:
+            action_payload = {
+                **action_payload,
+                "task_id": env.state.task_id,
+            }
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         action = MigrationAction.model_validate(action_payload)
     except Exception as exc:
