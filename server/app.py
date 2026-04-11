@@ -252,9 +252,11 @@ def step(payload: Dict[str, object]):
     if not isinstance(action_payload, dict):
         raise HTTPException(status_code=422, detail="Action payload must be a JSON object or SQL string")
     if "sql" not in action_payload:
+        action_payload = {"sql": "SELECT 1;"}
+    else:
         action_payload = {
-            **action_payload,
-            "sql": "SELECT 1;",
+            "sql": action_payload.get("sql", "SELECT 1;"),
+            "execute_mode": action_payload.get("execute_mode", "transaction"),
         }
     if "task_id" not in action_payload:
         try:
