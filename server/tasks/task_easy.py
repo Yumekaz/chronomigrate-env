@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
-import server.tasks as task_utils
-from server.tasks import TaskDefinition, coerce_grader_inputs
+from server.schema_grader import compute_schema_match
+from server.tasks import TaskDefinition, coerce_grader_inputs, normalize_task_score
 
 
 STARTING_SCHEMA = """
@@ -54,13 +54,15 @@ def grade_easy(
     availability_pct: float,
     **_: object,
 ) -> float:
-    return task_utils.generate_random_task_score()
+    schema_match = compute_schema_match(current_schema_ddl, target_schema_ddl)
+    data_integrity = 1.0 if data_hash_before == data_hash_after else 0.0
+    return normalize_task_score(schema_match * data_integrity * availability_pct)
 
 
 def easy_grader(*args: object, **kwargs: object) -> float:
     payload, is_complete = coerce_grader_inputs(*args, **kwargs)
     if not is_complete:
-        return 0.5
+        return normalize_task_score(0.0)
     return grade_easy(**payload)
 
 
