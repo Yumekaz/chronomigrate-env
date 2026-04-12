@@ -332,6 +332,7 @@ def list_tasks() -> Dict[str, object]:
             "description": task.description,
             "difficulty": task.difficulty,
             "max_steps": task.max_steps,
+            "grader": _grader_route(task_id),
         }
         for task_id, task in TASKS.items()
     ]

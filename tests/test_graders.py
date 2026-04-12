@@ -222,7 +222,10 @@ def test_tasks_endpoint_lists_expected_tasks():
         "medium_rename_fk",
         "hard_repartition",
     ]
-    assert all(set(task) == {"id", "description", "difficulty", "max_steps"} for task in tasks)
+    assert all(
+        set(task) == {"id", "description", "difficulty", "max_steps", "grader"}
+        for task in tasks
+    )
 
 
 def test_contract_endpoints_expose_metadata_and_schema():
@@ -1075,7 +1078,7 @@ def test_manifest_declares_three_simple_tasks():
         "medium_rename_fk",
         "hard_repartition",
     ]
-    assert "grader" not in manifest["tasks"][0]
+    assert manifest["tasks"][0]["grader"] == "grade/task_easy"
     assert manifest["action_space"]["type"] == "text"
     assert manifest["observation_space"]["format"] == "json"
 
@@ -1148,7 +1151,7 @@ def test_tasks_endpoint_exposes_simple_task_list():
     payload = response.json()
     assert payload["count"] >= 3
     for task in payload["tasks"]:
-        assert set(task) == {"id", "description", "difficulty", "max_steps"}
+        assert set(task) == {"id", "description", "difficulty", "max_steps", "grader"}
         assert task["id"] in TASKS
 
 
