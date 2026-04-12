@@ -14,13 +14,6 @@ CREATE TABLE orders (
     amount DECIMAL(10,2),
     CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(id)
 );
-
-CREATE TABLE order_items (
-    id SERIAL PRIMARY KEY,
-    order_id INTEGER NOT NULL,
-    product_name VARCHAR(200),
-    CONSTRAINT fk_items_orders FOREIGN KEY (order_id) REFERENCES orders(id)
-);
 """
 
 TARGET_SCHEMA = """
@@ -34,13 +27,6 @@ CREATE TABLE orders (
     user_id INTEGER NOT NULL,
     amount DECIMAL(10,2),
     CONSTRAINT fk_orders_users FOREIGN KEY (user_id) REFERENCES users(user_id)
-);
-
-CREATE TABLE order_items (
-    id SERIAL PRIMARY KEY,
-    order_id INTEGER NOT NULL,
-    product_name VARCHAR(200),
-    CONSTRAINT fk_items_orders FOREIGN KEY (order_id) REFERENCES orders(id)
 );
 """
 
@@ -124,8 +110,8 @@ TASK = TaskDefinition(
     task_id="medium_rename_fk",
     description="Rename a primary-key column and repair foreign key references safely.",
     difficulty="medium",
-    load_level=35,
-    max_steps=10,
+    load_level=20,
+    max_steps=6,
     starting_schema_sql=STARTING_SCHEMA.strip(),
     target_schema_ddl=TARGET_SCHEMA.strip(),
     seed_data_sql=SEED_DATA.strip(),

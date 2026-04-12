@@ -24,8 +24,8 @@ API_KEY = os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY", "")
 MAX_STEPS = 20
 TASK_MAX_STEPS = {
     "easy_add_column": 5,
-    "medium_rename_fk": 10,
-    "hard_repartition": 20,
+    "medium_rename_fk": 6,
+    "hard_repartition": 8,
 }
 OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "1"))
 OPENAI_CALL_TIMEOUT_SECONDS = float(os.getenv("OPENAI_CALL_TIMEOUT_SECONDS", "20"))
@@ -241,7 +241,7 @@ def _task_guidance(task_id: str) -> str:
     if task_id == "hard_repartition":
         return (
             "Do not repartition the live events table in place. Use create-copy-swap: "
-            "create a new partitioned parent table matching the target, create all eight hash partitions, "
+            "create a new partitioned parent table matching the target, create the required hash partitions, "
             "backfill rows in batches, rename the old table to events_old, rename the new table to events, "
             "and drop events_old only after the swap succeeds."
         )
@@ -323,14 +323,8 @@ def _fallback_sql(
                 "created_at TIMESTAMP NOT NULL"
                 ") PARTITION BY HASH (user_id);"
             ),
-            "CREATE TABLE events_p0 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 0);",
-            "CREATE TABLE events_p1 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 1);",
-            "CREATE TABLE events_p2 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 2);",
-            "CREATE TABLE events_p3 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 3);",
-            "CREATE TABLE events_p4 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 4);",
-            "CREATE TABLE events_p5 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 5);",
-            "CREATE TABLE events_p6 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 6);",
-            "CREATE TABLE events_p7 PARTITION OF events_new FOR VALUES WITH (MODULUS 8, REMAINDER 7);",
+            "CREATE TABLE events_p0 PARTITION OF events_new FOR VALUES WITH (MODULUS 2, REMAINDER 0);",
+            "CREATE TABLE events_p1 PARTITION OF events_new FOR VALUES WITH (MODULUS 2, REMAINDER 1);",
             (
                 "INSERT INTO events_new (id, user_id, event_type, payload, created_at) "
                 "SELECT id, user_id, event_type, payload, created_at FROM events;"

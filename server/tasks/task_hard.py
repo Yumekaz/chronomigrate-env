@@ -12,13 +12,7 @@ CREATE TABLE events (
     event_type VARCHAR(50),
     payload JSONB,
     created_at TIMESTAMP NOT NULL
-) PARTITION BY RANGE (created_at);
-
-CREATE TABLE events_2025_q1 PARTITION OF events
-FOR VALUES FROM ('2025-01-01') TO ('2025-04-01');
-
-CREATE TABLE events_2025_q2 PARTITION OF events
-FOR VALUES FROM ('2025-04-01') TO ('2025-07-01');
+);
 """
 
 TARGET_SCHEMA = """
@@ -30,14 +24,8 @@ CREATE TABLE events (
     created_at TIMESTAMP NOT NULL
 ) PARTITION BY HASH (user_id);
 
-CREATE TABLE events_p0 PARTITION OF events FOR VALUES WITH (MODULUS 8, REMAINDER 0);
-CREATE TABLE events_p1 PARTITION OF events FOR VALUES WITH (MODULUS 8, REMAINDER 1);
-CREATE TABLE events_p2 PARTITION OF events FOR VALUES WITH (MODULUS 8, REMAINDER 2);
-CREATE TABLE events_p3 PARTITION OF events FOR VALUES WITH (MODULUS 8, REMAINDER 3);
-CREATE TABLE events_p4 PARTITION OF events FOR VALUES WITH (MODULUS 8, REMAINDER 4);
-CREATE TABLE events_p5 PARTITION OF events FOR VALUES WITH (MODULUS 8, REMAINDER 5);
-CREATE TABLE events_p6 PARTITION OF events FOR VALUES WITH (MODULUS 8, REMAINDER 6);
-CREATE TABLE events_p7 PARTITION OF events FOR VALUES WITH (MODULUS 8, REMAINDER 7);
+CREATE TABLE events_p0 PARTITION OF events FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+CREATE TABLE events_p1 PARTITION OF events FOR VALUES WITH (MODULUS 2, REMAINDER 1);
 """
 
 def _format_insert_batches(table: str, columns: str, rows: list[str], batch_size: int = 400) -> str:
@@ -125,8 +113,8 @@ TASK = TaskDefinition(
     task_id="hard_repartition",
     description="Repartition a large table under load using a safe multi-step migration.",
     difficulty="hard",
-    load_level=70,
-    max_steps=20,
+    load_level=30,
+    max_steps=8,
     starting_schema_sql=STARTING_SCHEMA.strip(),
     target_schema_ddl=TARGET_SCHEMA.strip(),
     seed_data_sql=SEED_DATA.strip(),
