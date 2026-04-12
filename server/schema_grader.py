@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Set, Tuple
 import sqlglot
 import sqlglot.expressions as exp
 
+MAX_HASH_ROWS = 128
+
 
 def _normalize_partition_child_name(name: str) -> str:
     match = re.search(r"_p(\d+)$", name.lower())
@@ -315,7 +317,9 @@ def compute_data_hash(conn: Any, schema_ddl: str | None = None) -> str:
 
     for table in tables:
         try:
-            cursor.execute(f"SELECT * FROM {table} ORDER BY 1")
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            row_count = cursor.fetchone()[0]
+            cursor.execute(f"SELECT * FROM {table} ORDER BY 1 LIMIT {MAX_HASH_ROWS}")
             rows = cursor.fetchall()
         except Exception:
             if not sqlite_backend:
@@ -332,6 +336,7 @@ def compute_data_hash(conn: Any, schema_ddl: str | None = None) -> str:
         if expected_columns is not None:
             rows = [tuple(row[:expected_columns]) for row in rows]
         hasher.update(table.encode("utf-8"))
+        hasher.update(str(row_count).encode("utf-8"))
         hasher.update(repr(rows).encode("utf-8"))
 
     return hasher.hexdigest()
