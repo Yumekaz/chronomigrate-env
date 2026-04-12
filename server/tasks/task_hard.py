@@ -58,8 +58,8 @@ def _build_seed_data() -> str:
     base = datetime(2025, 1, 1, 0, 0, 0)
     event_types = ["login", "purchase", "logout", "view", "click", "checkout"]
     rows = []
-    for index in range(1, 2001):
-        user_id = ((index - 1) % 512) + 1
+    for index in range(1, 256 + 1):
+        user_id = ((index - 1) % 64) + 1
         event_type = event_types[(index - 1) % len(event_types)]
         created_at = base + timedelta(minutes=index - 1)
         payload = json.dumps(
@@ -125,7 +125,7 @@ TASK = TaskDefinition(
     task_id="hard_repartition",
     description="Repartition a large table under load using a safe multi-step migration.",
     difficulty="hard",
-    load_level=160,
+    load_level=70,
     max_steps=20,
     starting_schema_sql=STARTING_SCHEMA.strip(),
     target_schema_ddl=TARGET_SCHEMA.strip(),
