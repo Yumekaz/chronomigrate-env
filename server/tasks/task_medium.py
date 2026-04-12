@@ -55,18 +55,18 @@ def _format_insert_batches(table: str, columns: str, rows: list[str], batch_size
 
 
 def _build_seed_data() -> str:
-    user_rows = [f"({index}, 'user_{index:04d}')" for index in range(1, 501)]
+    user_rows = [f"({index}, 'user_{index:04d}')" for index in range(1, 121)]
 
     order_rows = []
-    for index in range(1, 1501):
-        user_id = ((index - 1) % 500) + 1
+    for index in range(1, 361):
+        user_id = ((index - 1) % 120) + 1
         amount = 10.0 + ((index * 37) % 4000) / 100.0
         order_rows.append(f"({index}, {user_id}, {amount:.2f})")
 
     item_rows = []
     product_names = ["book", "pen", "bag", "mouse", "desk", "chair"]
-    for index in range(1, 4501):
-        order_id = ((index - 1) % 1500) + 1
+    for index in range(1, 1081):
+        order_id = ((index - 1) % 360) + 1
         product_name = product_names[(index - 1) % len(product_names)]
         item_rows.append(f"({index}, {order_id}, '{product_name}_{index:04d}')")
 
@@ -124,7 +124,7 @@ TASK = TaskDefinition(
     task_id="medium_rename_fk",
     description="Rename a primary-key column and repair foreign key references safely.",
     difficulty="medium",
-    load_level=300,
+    load_level=90,
     max_steps=10,
     starting_schema_sql=STARTING_SCHEMA.strip(),
     target_schema_ddl=TARGET_SCHEMA.strip(),

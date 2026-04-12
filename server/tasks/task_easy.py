@@ -35,7 +35,7 @@ def _format_insert_batches(table: str, columns: str, rows: list[str], batch_size
 def _build_seed_data() -> str:
     base = datetime(2025, 1, 1, 0, 0, 0)
     rows = []
-    for index in range(1, 1001):
+    for index in range(1, 201):
         created_at = base + timedelta(seconds=index - 1)
         rows.append(
             f"({index}, 'user_{index:04d}', '{created_at:%Y-%m-%d %H:%M:%S}')"
@@ -86,7 +86,7 @@ TASK = TaskDefinition(
     task_id="easy_add_column",
     description="Add two defaulted columns without causing downtime.",
     difficulty="easy",
-    load_level=100,
+    load_level=30,
     max_steps=5,
     starting_schema_sql=STARTING_SCHEMA.strip(),
     target_schema_ddl=TARGET_SCHEMA.strip(),
