@@ -81,7 +81,7 @@ def _build_seed_data() -> str:
     )
 
 
-SEED_DATA = _build_seed_data()
+SEED_DATA = ""
 
 
 def grade_medium(
