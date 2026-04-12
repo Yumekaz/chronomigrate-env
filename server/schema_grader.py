@@ -1,6 +1,7 @@
 import hashlib
 import re
 import sqlite3
+from functools import lru_cache
 from typing import Any, Dict, List, Set, Tuple
 
 import sqlglot
@@ -74,6 +75,7 @@ def _partition_child_signature(properties: Any) -> Dict[str, Any]:
     return {}
 
 
+@lru_cache(maxsize=256)
 def extract_schema_fingerprint(ddl: str) -> Dict[str, Any]:
     fingerprint: Dict[str, Any] = {
         "tables": {},
@@ -159,6 +161,9 @@ def extract_schema_fingerprint(ddl: str) -> Dict[str, Any]:
 
 
 def compute_schema_match(current_ddl: str, target_ddl: str) -> float:
+    if current_ddl.strip() == target_ddl.strip():
+        return 1.0
+
     current = extract_schema_fingerprint(current_ddl)
     target = extract_schema_fingerprint(target_ddl)
 
@@ -289,6 +294,7 @@ def _postgres_tables(conn: Any) -> List[str]:
     return [row[0] for row in cursor.fetchall()]
 
 
+@lru_cache(maxsize=256)
 def _hash_plan_from_schema(schema_ddl: str) -> Dict[str, int]:
     fingerprint = extract_schema_fingerprint(schema_ddl)
     partition_children = {

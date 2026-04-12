@@ -40,6 +40,7 @@ class ChronoMigrateEnv(Environment):
             self.current_task.starting_schema_sql,
             self.current_task.seed_data_sql,
         )
+        current_ddl = self.db.get_schema_ddl()
         initial_hash = compute_data_hash(self.db.conn, self.current_task.starting_schema_sql)
         self.des = DiscreteEventSimulator(task_load_level=self.current_task.load_level, seed=seed)
         self._state = MigrationState(
@@ -47,14 +48,14 @@ class ChronoMigrateEnv(Environment):
             task_id=task_id,
             step_count=0,
             max_steps=self.current_task.max_steps,
-            current_schema_ddl=self.db.get_schema_ddl(),
+            current_schema_ddl=current_ddl,
             target_schema_ddl=self.current_task.target_schema_ddl,
             total_background_queries=0,
             failed_background_queries=0,
             data_integrity_hash=initial_hash,
             current_data_hash=initial_hash,
             schema_match_pct=compute_schema_match(
-                self.db.get_schema_ddl(), self.current_task.target_schema_ddl
+                current_ddl, self.current_task.target_schema_ddl
             ),
             cumulative_reward=0.0,
             done=False,
