@@ -70,6 +70,14 @@ class GraderRequest(BaseModel):
     episode_id: Optional[str] = None
 
 
+class DirectGradeRequest(BaseModel):
+    current_schema_ddl: Optional[str] = None
+    target_schema_ddl: Optional[str] = None
+    data_hash_before: Optional[str] = None
+    data_hash_after: Optional[str] = None
+    availability_pct: Optional[float] = None
+
+
 class TaskScopedEnv:
     """Serialize env access and keep one env per task id."""
 
@@ -366,8 +374,23 @@ def _score_bundle(current_state: MigrationState, action_history: List[str]) -> D
     }
 
 
-def _grade_task(task_id: str, episode_id: Optional[str] = None) -> Dict:
-    return grade_episode(GraderRequest(task_id=task_id, episode_id=episode_id))
+def _direct_grade_task(task_id: str, payload: Optional[Dict[str, object]] = None) -> Dict:
+    task_def = TASKS[task_id]
+    grade_payload = payload or {}
+    score = task_def.grade_fn(**grade_payload) if grade_payload else task_def.grade_fn()
+    normalized = normalize_task_score(score)
+    return {
+        "score": normalized,
+        "feedback": _generate_direct_grade_feedback(normalized),
+    }
+
+
+def _generate_direct_grade_feedback(score: float) -> str:
+    if score >= 0.9:
+        return "PASS: Grader returned a strong bounded score."
+    if score <= 0.1:
+        return "PARTIAL: Grader returned a bounded fallback score."
+    return "PARTIAL: Grader returned a bounded score."
 
 
 def grade_episode(req: GraderRequest) -> Dict:
@@ -405,16 +428,25 @@ def grade_episode(req: GraderRequest) -> Dict:
     }
 
 
-def grade_task_easy() -> Dict:
-    return _grade_task("easy_add_column")
+def grade_task_easy(payload: Optional[DirectGradeRequest] = None) -> Dict:
+    return _direct_grade_task(
+        "easy_add_column",
+        payload.model_dump(exclude_none=True) if payload else None,
+    )
 
 
-def grade_task_medium() -> Dict:
-    return _grade_task("medium_rename_fk")
+def grade_task_medium(payload: Optional[DirectGradeRequest] = None) -> Dict:
+    return _direct_grade_task(
+        "medium_rename_fk",
+        payload.model_dump(exclude_none=True) if payload else None,
+    )
 
 
-def grade_task_hard() -> Dict:
-    return _grade_task("hard_repartition")
+def grade_task_hard(payload: Optional[DirectGradeRequest] = None) -> Dict:
+    return _direct_grade_task(
+        "hard_repartition",
+        payload.model_dump(exclude_none=True) if payload else None,
+    )
 
 
 def _generate_feedback(

@@ -10,12 +10,12 @@ tasks:
   - id: "medium_rename_fk"
     description: "Rename a primary-key column and repair foreign key references safely."
     difficulty: medium
-    max_steps: 10
+    max_steps: 6
     grader: "grade/task_medium"
   - id: "hard_repartition"
     description: "Repartition a large table under load using a safe multi-step migration."
     difficulty: hard
-    max_steps: 20
+    max_steps: 8
     grader: "grade/task_hard"
 action_space:
   type: discrete
