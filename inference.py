@@ -27,7 +27,8 @@ TASK_MAX_STEPS = {
     "medium_rename_fk": 10,
     "hard_repartition": 20,
 }
-OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "4"))
+OPENAI_RETRY_ATTEMPTS = int(os.getenv("OPENAI_RETRY_ATTEMPTS", "1"))
+OPENAI_CALL_TIMEOUT_SECONDS = float(os.getenv("OPENAI_CALL_TIMEOUT_SECONDS", "20"))
 ENV_REQUEST_CONNECT_TIMEOUT_SECONDS = float(
     os.getenv("ENV_REQUEST_CONNECT_TIMEOUT_SECONDS", "5")
 )
@@ -144,6 +145,7 @@ def _generate_sql(client: OpenAI, messages: List[Dict[str, str]], seed: int) -> 
                 temperature=0.0,
                 seed=seed,
                 max_tokens=200,
+                timeout=OPENAI_CALL_TIMEOUT_SECONDS,
             )
             return _normalize_sql(completion.choices[0].message.content or "")
         except (RateLimitError, APIConnectionError, APITimeoutError) as exc:
@@ -403,7 +405,7 @@ def run_episode(task_id: str, seed: int = 42) -> float:
         )
         messages.append({"role": "user", "content": prompt})
         sql = _fallback_sql(task_id, observation, history)
-        if client is not None:
+        if client is not None and attempts == 1:
             try:
                 candidate_sql = _generate_sql(client, messages, seed)
                 if candidate_sql:
